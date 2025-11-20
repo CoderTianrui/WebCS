@@ -5,7 +5,7 @@ services:
     plan: free
     # Tell Render to look inside the 'server' directory
     root: server
-    buildCommand: npm install
+    buildCommand: cd server && npm install
     startCommand: node server.js
     envVars:
       - key: PORT
