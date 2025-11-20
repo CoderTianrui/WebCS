@@ -10,6 +10,14 @@ export class RemotePlayer {
         this.name = name;
         this.mesh = new THREE.Group();
         this.isDead = false;
+        this.hp = startData.hp ?? 100;
+        const initialY = typeof startData.y === 'number' ? startData.y : 10;
+        this.lastServerState = {
+            x: startData.x ?? 0,
+            y: initialY,
+            z: startData.z ?? 0,
+            ry: startData.ry ?? 0
+        };
         
         // Body (Split into Torso and Legs for better visual grounding)
         const bodyMat = new THREE.MeshLambertMaterial({color: 0x0000ff}); 
@@ -36,7 +44,7 @@ export class RemotePlayer {
 
         // Position
         // FIX: StartData.y is camera height (10), so feet should be at y-10.
-        this.mesh.position.set(startData.x || 0, (startData.y || 0) - 10, startData.z || 0);
+        this.mesh.position.set(this.lastServerState.x, this.lastServerState.y - 10, this.lastServerState.z);
         
         state.scene.add(this.mesh);
         
@@ -44,11 +52,12 @@ export class RemotePlayer {
         if (startData.isDead || (startData.hp !== undefined && startData.hp <= 0)) {
             this.isDead = true;
             state.scene.remove(this.mesh);
+            this.mesh.visible = false;
         }
         
         // Interpolation buffer
         this.targetPos = this.mesh.position.clone();
-        this.targetRot = 0;
+        this.targetRot = this.lastServerState.ry;
     }
 
     createNameTag(text) {
@@ -79,9 +88,10 @@ export class RemotePlayer {
     }
 
     setTarget(data) {
+        this.updateLastServerState(data);
         // FIX: data.y is camera height, offset by -10 for feet
-        this.targetPos.set(data.x, data.y - 10, data.z);
-        this.targetRot = data.ry;
+        this.targetPos.set(this.lastServerState.x, this.lastServerState.y - 10, this.lastServerState.z);
+        this.targetRot = this.lastServerState.ry;
     }
     
     shoot(data) {
@@ -90,17 +100,68 @@ export class RemotePlayer {
         playSound('enemy_fire'); 
     }
     
-    die() {
-        this.isDead = true;
-        state.scene.remove(this.mesh);
+    syncFromServer(data) {
+        this.setTarget(data);
+        const shouldBeDead = data.isDead || (typeof data.hp === 'number' ? data.hp <= 0 : this.hp <= 0);
+        if (shouldBeDead) {
+            this.die();
+            return;
+        }
+        if (this.isDead) {
+            this.respawn(data);
+        }
     }
     
-    respawn() {
+    die() {
+        if (this.isDead) return;
+        this.isDead = true;
+        const deathPos = this.mesh.position.clone().add(new THREE.Vector3(0, 6, 0));
+        spawnParticles(deathPos, 0x880000, 6);
+        if (this.mesh.parent) {
+            state.scene.remove(this.mesh);
+        }
+        this.mesh.visible = false;
+    }
+    
+    respawn(spawnData) {
         this.isDead = false;
-        state.scene.add(this.mesh);
+        if (spawnData) {
+            this.setTarget(spawnData);
+            this.mesh.position.copy(this.targetPos);
+        } else {
+            this.mesh.position.copy(this.targetPos);
+        }
+        this.mesh.visible = true;
+        if (!this.mesh.parent) {
+            state.scene.add(this.mesh);
+        }
     }
 
     dispose() {
         state.scene.remove(this.mesh);
+        this.mesh.traverse(child => {
+            if (child.geometry && child.geometry.dispose) {
+                child.geometry.dispose();
+            }
+            if (child.material) {
+                if (child.material.map && child.material.map.dispose) {
+                    child.material.map.dispose();
+                }
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(mat => mat.dispose && mat.dispose());
+                } else if (child.material.dispose) {
+                    child.material.dispose();
+                }
+            }
+        });
+    }
+
+    updateLastServerState(data) {
+        if (!data) return;
+        if (typeof data.x === 'number') this.lastServerState.x = data.x;
+        if (typeof data.y === 'number') this.lastServerState.y = data.y;
+        if (typeof data.z === 'number') this.lastServerState.z = data.z;
+        if (typeof data.ry === 'number') this.lastServerState.ry = data.ry;
+        if (typeof data.hp === 'number') this.hp = data.hp;
     }
 }

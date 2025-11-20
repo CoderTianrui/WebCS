@@ -16,6 +16,7 @@ const io = new Server(server, {
 app.use(express.static(path.join(__dirname, '../game_deploy')));
 
 const rooms = {}; // { roomId: { players: { socketId: { x,y,z, name, hp } } } }
+const DEFAULT_SPAWN = { x: 0, y: 10, z: 100, ry: Math.PI };
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
@@ -39,7 +40,11 @@ io.on('connection', (socket) => {
         rooms[room].players[socket.id] = {
             id: socket.id,
             name: name || `Player ${socket.id.substr(0,4)}`,
-            x: 0, y: 10, z: 0,
+            x: DEFAULT_SPAWN.x,
+            y: DEFAULT_SPAWN.y,
+            z: DEFAULT_SPAWN.z,
+            ry: DEFAULT_SPAWN.ry,
+            rx: 0,
             hp: 100,
             isDead: false,
             kills: 0,
@@ -82,7 +87,12 @@ io.on('connection', (socket) => {
                 p.x = data.x; p.y = data.y; p.z = data.z;
                 p.rx = data.rx; p.ry = data.ry;
                 // Broadcast to others (volatile for performance)
-                socket.to(room).volatile.emit('player_update', { id: socket.id, ...data });
+                socket.to(room).volatile.emit('player_update', { 
+                    id: socket.id, 
+                    ...data,
+                    hp: p.hp,
+                    isDead: p.isDead
+                });
             }
         });
 
@@ -96,9 +106,21 @@ io.on('connection', (socket) => {
         socket.on('respawn', () => {
             updateActivity();
             if (rooms[room] && rooms[room].players[socket.id]) {
-                rooms[room].players[socket.id].hp = 100;
-                rooms[room].players[socket.id].isDead = false;
-                io.to(room).emit('player_respawn', socket.id);
+                const player = rooms[room].players[socket.id];
+                player.hp = 100;
+                player.isDead = false;
+                player.x = DEFAULT_SPAWN.x;
+                player.y = DEFAULT_SPAWN.y;
+                player.z = DEFAULT_SPAWN.z;
+                player.ry = DEFAULT_SPAWN.ry;
+                io.to(room).emit('player_respawn', {
+                    id: socket.id,
+                    x: player.x,
+                    y: player.y,
+                    z: player.z,
+                    ry: player.ry,
+                    hp: player.hp
+                });
             }
         });
 

@@ -61,6 +61,8 @@ export const network = {
         });
 
         s.on('player_joined', (p) => {
+            if (p.id === state.id) return;
+            if (state.remotePlayers[p.id]) return;
             state.remotePlayers[p.id] = new RemotePlayer(p.id, p.name, p);
             // Maybe add chat message: p.name joined
         });
@@ -73,8 +75,9 @@ export const network = {
         });
 
         s.on('player_update', (data) => {
-            if(state.remotePlayers[data.id]) {
-                state.remotePlayers[data.id].setTarget(data);
+            const remote = state.remotePlayers[data.id];
+            if(remote) {
+                remote.syncFromServer(data);
             }
         });
         
@@ -94,9 +97,12 @@ export const network = {
             }
         });
 
-        s.on('player_respawn', (id) => {
-             if(state.remotePlayers[id]) {
-                 state.remotePlayers[id].respawn();
+        s.on('player_respawn', (payload) => {
+             const data = typeof payload === 'string' ? { id: payload } : payload;
+             if (!data || data.id === state.id) return;
+             const remote = state.remotePlayers[data.id];
+             if(remote) {
+                 remote.respawn(data);
              }
         });
         

@@ -8,6 +8,9 @@ import { killEnemy } from './entities.js';
 import { toggleMusic } from './audio.js';
 import { network, updateScoreboardUI } from './network.js';
 
+const isEnterKey = (event) => event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter' || event.keyCode === 13;
+const isEscapeKey = (event) => event.code === 'Escape' || event.key === 'Escape' || event.keyCode === 27;
+
 export function createWeaponModel() {
     if(state.weaponGroup) state.camera.remove(state.weaponGroup);
     state.weaponGroup = new THREE.Group();
@@ -236,7 +239,7 @@ export function onKeyDown(e) {
     // Chat Logic
     if (isChatVisible) {
         // If chat is open, capture inputs
-        if (e.code === 'Enter') {
+        if (isEnterKey(e)) {
             const msg = chatInput.value.trim();
             if (msg.length > 0 && state.gameMode === 'multi') {
                 network.sendChat(msg);
@@ -247,7 +250,7 @@ export function onKeyDown(e) {
             state.controls.lock(); // Re-lock game
             return;
         }
-        if (e.code === 'Escape') {
+        if (isEscapeKey(e)) {
             chatInput.value = '';
             chatInput.style.display = 'none'; // Hide
             chatInput.blur();
@@ -258,7 +261,7 @@ export function onKeyDown(e) {
     } else {
         // Chat not open
         // Allow opening chat in both modes for consistency/testing, though sending only works in Multi
-        if (e.code === 'Enter') {
+        if (isEnterKey(e)) {
             const chatInput = document.getElementById('chat-input');
             chatInput.style.display = 'block'; // Show FIRST to prevent start screen from appearing on unlock
             
