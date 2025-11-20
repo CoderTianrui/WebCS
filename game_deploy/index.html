@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CS 1.6 Web - Multiplayer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="damage-flash"></div>
+<div id="headshot-msg">HEADSHOT!</div>
+
+<div id="ui-layer">
+    <div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
+    <div id="hud">
+        <div>✚ <span id="hp">100</span></div>
+        <div id="weapon-info"><span id="wep-name">GLOCK</span> | <span id="ammo">20</span> / <span id="mag">120</span></div>
+    </div>
+    <div id="money">$ 800</div>
+    <div id="killfeed"></div>
+</div>
+
+<!-- LOGIN MODAL -->
+<div id="login-modal">
+    <h1>CS 1.6 WEB: MULTIPLAYER</h1>
+    <input type="text" id="player-name" placeholder="Enter Your Name" maxlength="15">
+    <input type="text" id="room-name" placeholder="Room ID (Default: default)" maxlength="10">
+    <div class="menu-btn" id="login-btn">JOIN GAME</div>
+    <p style="font-size: 12px; color: #888;">Max 5 Players per Room</p>
+</div>
+
+<!-- SHOP -->
+<div id="shop-menu" class="menu-box">
+    <h2 style="margin-top:0; border-bottom: 1px solid #ffb93b; padding-bottom:10px;">BUY MENU</h2>
+    <div class="shop-item" onclick="buy('glock')"><span>1. Glock-18 (Sec)</span> <span>$400</span></div>
+    <div class="shop-item" onclick="buy('deagle')"><span>2. Deagle (Sec)</span> <span>$700</span></div>
+    <div class="shop-item" onclick="buy('m4a1')"><span>3. M4A1 (Pri)</span> <span>$3100</span></div>
+    <div class="shop-item" onclick="buy('awp')"><span>4. AWP (Pri)</span> <span>$4750</span></div>
+    <p style="font-size:12px; color:#aaa;">Press B to Close</p>
+</div>
+
+<!-- DEATH SCREEN -->
+<div id="death-screen" class="menu-box" style="z-index: 30;">
+    <div class="dead-msg">YOU DIED</div>
+    <div class="menu-btn" onclick="respawnPlayer()">RESPAWN</div>
+</div>
+
+<!-- START SCREEN -->
+<div id="start-screen" style="display:none;">
+    <h1>CS 1.6 WEB: FIX & FEATURES</h1>
+    <p>WASD: Move | CTRL: Crouch | R: Reload</p>
+    <p>1: Primary | 2: Pistol | 3: Knife</p>
+    <div class="menu-btn" id="start-btn">CLICK TO START</div>
+</div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script type="module">
+    import { initLoginUI } from './js/ui.js';
+    import './js/main.js';
+    
+    initLoginUI();
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+SERVER DEPLOYMENT INSTRUCTIONS
+==============================
+
+Since your Hostinger plan cannot run the Node.js server, we will use Render.com (it's free).
+
+STEP 1: PREPARE THE SERVER CODE
+-------------------------------
+1.  I have already created a `server` folder in your workspace.
+2.  This folder contains `server.js`, `package.json`, and `render.yaml`.
+3.  You need to upload ONLY this `server` folder to a GitHub repository.
+    - Create a new repo on GitHub (e.g., "my-game-server").
+    - Upload the files inside `server/` to it.
+
+STEP 2: DEPLOY TO RENDER
+------------------------
+1.  Go to https://render.com and sign up.
+2.  Click "New +" -> "Web Service".
+3.  Connect your GitHub account and select the repository you just created.
+4.  Render will auto-detect the settings (Node.js). 
+5.  Click "Create Web Service".
+6.  Wait for it to deploy. It will give you a URL like: `https://my-game-server.onrender.com`.
+7.  COPY THIS URL.
+
+STEP 3: CONNECT THE GAME
+------------------------
+1.  Go back to your `game_deploy` folder.
+2.  Open `js/network.js`.
+3.  Find the line at the top:
+    `const PRODUCTION_SERVER_URL = "https://REPLACE-ME-WITH-YOUR-RENDER-URL.onrender.com";`
+4.  Paste your Render URL there.
+    Example: `const PRODUCTION_SERVER_URL = "https://cool-game-123.onrender.com";`
+5.  Save the file.
+
+STEP 4: UPLOAD GAME TO HOSTINGER
+--------------------------------
+1.  Now upload the modified `game_deploy` folder contents to Hostinger's `public_html`.
+2.  Done! Players will connect automatically without typing the URL.
+

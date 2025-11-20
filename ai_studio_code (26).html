@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CS 1.6 Web - AI & Physics Fix</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; font-family: 'Arial', sans-serif; user-select: none; }
+        
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        }
+        .ch-h { position: absolute; width: 20px; height: 2px; background: #0f0; left: -10px; top: -1px;}
+        .ch-v { position: absolute; width: 2px; height: 20px; background: #0f0; left: -1px; top: -10px;}
+
+        #hud {
+            position: absolute; bottom: 20px; left: 20px; right: 20px;
+            display: flex; justify-content: space-between;
+            color: #ffb93b; font-weight: bold; font-size: 30px;
+            text-shadow: 2px 2px 0 #000;
+        }
+        
+        #money { color: #55ff55; position: absolute; bottom: 60px; right: 20px; font-size: 24px; text-shadow: 1px 1px 0 #000; }
+        
+        #damage-flash {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,0,0,0.4); opacity: 0; transition: opacity 0.1s; pointer-events: none;
+        }
+        
+        #headshot-msg {
+            position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%);
+            color: #ff0000; font-size: 24px; font-weight: bold; text-shadow: 2px 2px 0 #000;
+            opacity: 0; transition: opacity 0.2s;
+        }
+
+        /* MENU STYLES */
+        .menu-box {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 500px; background: rgba(30,30,30,0.95); border: 2px solid #ffb93b;
+            color: #ffb93b; padding: 20px; pointer-events: auto; font-family: 'Courier New', Courier, monospace;
+            display: none; text-align: center;
+        }
+        .menu-btn {
+            background: #333; color: white; padding: 10px; margin: 5px; border: 1px solid #555; cursor: pointer;
+            font-size: 18px;
+        }
+        .menu-btn:hover { background: #555; border-color: #ffb93b; }
+
+        #shop-menu .shop-item { text-align: left; display: flex; justify-content: space-between; padding: 10px; border-bottom:1px solid #444; cursor: pointer;}
+        #shop-menu .shop-item:hover { background: #444; }
+
+        #start-screen {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); color: white; pointer-events: auto; z-index: 20;
+        }
+        
+        #killfeed { position: absolute; top: 10px; right: 10px; text-align: right; color: #ffb93b; font-weight: bold; font-size: 16px; text-shadow: 1px 1px 0 #000; }
+        
+        .dead-msg { color: red; font-size: 40px; font-weight: bold; margin-bottom: 20px;}
+    </style>
+</head>
+<body>
+
+<div id="damage-flash"></div>
+<div id="headshot-msg">HEADSHOT!</div>
+
+<div id="ui-layer">
+    <div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
+    <div id="hud">
+        <div>✚ <span id="hp">100</span></div>
+        <div id="weapon-info"><span id="wep-name">GLOCK</span> | <span id="ammo">20</span> / <span id="mag">120</span></div>
+    </div>
+    <div id="money">$ 800</div>
+    <div id="killfeed"></div>
+</div>
+
+<!-- SHOP -->
+<div id="shop-menu" class="menu-box">
+    <h2 style="margin-top:0; border-bottom: 1px solid #ffb93b; padding-bottom:10px;">BUY MENU</h2>
+    <div class="shop-item" onclick="buy('glock')"><span>1. Glock-18 (Sec)</span> <span>$400</span></div>
+    <div class="shop-item" onclick="buy('deagle')"><span>2. Deagle (Sec)</span> <span>$700</span></div>
+    <div class="shop-item" onclick="buy('m4a1')"><span>3. M4A1 (Pri)</span> <span>$3100</span></div>
+    <div class="shop-item" onclick="buy('awp')"><span>4. AWP (Pri)</span> <span>$4750</span></div>
+    <p style="font-size:12px; color:#aaa;">Press B to Close</p>
+</div>
+
+<!-- DEATH SCREEN -->
+<div id="death-screen" class="menu-box" style="z-index: 30;">
+    <div class="dead-msg">YOU DIED</div>
+    <div class="menu-btn" onclick="respawnPlayer()">RESPAWN</div>
+</div>
+
+<!-- START SCREEN -->
+<div id="start-screen">
+    <h1>CS 1.6 WEB: FIX & FEATURES</h1>
+    <p>WASD: Move | CTRL: Crouch | R: Reload</p>
+    <p>1: Primary | 2: Pistol | 3: Knife</p>
+    <div class="menu-btn" id="start-btn">CLICK TO START</div>
+</div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+    // --- CONSTANTS ---
+    const WEAPONS = {
+        knife:  { name: "KNIFE", type: "melee", dmg: 35, rate: 400, range: 8, sound: 'knife' },
+        glock:  { name: "GLOCK", type: "pistol", dmg: 15, rate: 200, clip: 20, spread: 0.03, sound: 'pistol' },
+        deagle: { name: "DEAGLE", type: "pistol", dmg: 55, rate: 500, clip: 7, spread: 0.01, sound: 'heavy' },
+        m4a1:   { name: "M4A1", type: "rifle", dmg: 30, rate: 100, clip: 30, spread: 0.04, sound: 'rifle' },
+        awp:    { name: "AWP", type: "rifle", dmg: 110, rate: 1500, clip: 10, spread: 0.00, sound: 'sniper' }
+    };
+
+    // --- GAME STATE ---
+    let camera, scene, renderer, controls;
+    let moveF=false, moveB=false, moveL=false, moveR=false, crouch=false;
+    let canJump=false;
+    let prevTime = performance.now();
+    
+    // Physics
+    const velocity = new THREE.Vector3();
+    const direction = new THREE.Vector3();
+    const objects = []; // Collision Objects (Walls)
+    const enemies = []; // Active NPCs
+    const particles = []; // Visual Effects
+
+    // Player
+    const player = {
+        hp: 100, money: 800,
+        // Slot 0: Primary, Slot 1: Secondary, Slot 2: Melee
+        slots: [null, 'glock', 'knife'], activeSlot: 1,
+        ammo: { glock:20, deagle:7, m4a1:30, awp:10 },
+        mags: { glock:120, deagle:35, m4a1:90, awp:30 },
+        lastShot: 0, reloading: false, isDead: false,
+        height: 10
+    };
+
+    // Audio & Vis
+    let weaponGroup; 
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let bgmOscillators = [];
+    let musicPlaying = false;
+
+    init();
+    animate();
+
+    function init() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        scene.fog = new THREE.Fog(0x87CEEB, 0, 500);
+
+        // Camera setup (y=10 is eye level)
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 10, 100); 
+        camera.rotation.y = Math.PI;
+
+        // Lights
+        const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+        sun.position.set(50, 100, 50);
+        scene.add(sun);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+        // Controls
+        controls = new PointerLockControls(camera, document.body);
+        
+        const startBtn = document.getElementById('start-btn');
+        startBtn.addEventListener('click', () => {
+            document.getElementById('start-screen').style.display = 'none';
+            controls.lock();
+            if(!musicPlaying) toggleMusic();
+        });
+
+        controls.addEventListener('unlock', () => {
+            if (!player.isDead && document.getElementById('shop-menu').style.display !== 'block') {
+                document.getElementById('start-screen').style.display = 'flex';
+            }
+        });
+
+        scene.add(controls.getObject());
+
+        // Inputs
+        document.addEventListener('keydown', onKeyDown);
+        document.addEventListener('keyup', onKeyUp);
+        document.addEventListener('mousedown', () => { if(controls.isLocked && !player.isDead) fireWeapon(); });
+
+        // Map
+        buildMap();
+        
+        // Player Weapon
+        createWeaponModel();
+        switchWeapon(1); // Start with Glock
+
+        // NPCs
+        spawnEnemy(0, 0, -150);
+        spawnEnemy(-30, 0, -150);
+        spawnEnemy(30, 0, -150);
+
+        // Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth/window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        updateHUD();
+    }
+
+    // --- MAP ---
+    function buildMap() {
+        const tex = createTexture('#d2c295', '#b8a878'); // Sand
+        const brick = createTexture('#aaa', '#777', true); // Wall
+        const crate = createTexture('#654321', '#4e342e', false, true); // Box
+
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), new THREE.MeshStandardMaterial({map:tex}));
+        floor.rotation.x = -Math.PI/2;
+        scene.add(floor);
+        objects.push(floor); // Add floor for bullet holes
+
+        function addBox(x,y,z,w,h,d,t) {
+            const geo = new THREE.BoxGeometry(w,h,d);
+            const mat = new THREE.MeshStandardMaterial({map:t});
+            const m = new THREE.Mesh(geo, mat);
+            m.position.set(x, y+h/2, z); // Pivot at bottom
+            m.isWall = true; // Tag for collision
+            // Simple bounding box for physics
+            m.geometry.computeBoundingBox();
+            
+            scene.add(m);
+            objects.push(m);
+        }
+
+        // Walls
+        addBox(-100,0,0, 20,60,400, brick);
+        addBox(100,0,0, 20,60,400, brick);
+        addBox(0,0,-200, 220,60,20, brick);
+        addBox(0,0,120, 220,60,20, brick);
+
+        // Cover
+        addBox(0,0,60, 60,15,5, brick); // Safe zone wall
+        addBox(-30,0,-50, 12,12,12, crate);
+        addBox(30,0,-50, 12,12,12, crate);
+        addBox(0,0,-100, 20,10,40, crate);
+    }
+
+    // --- PLAYER WEAPON VISUALS ---
+    function createWeaponModel() {
+        if(weaponGroup) camera.remove(weaponGroup);
+        weaponGroup = new THREE.Group();
+        camera.add(weaponGroup);
+    }
+
+    function switchWeapon(slot) {
+        if(player.reloading || player.isDead) return;
+        const name = player.slots[slot];
+        if(!name) return;
+        
+        player.activeSlot = slot;
+        
+        // Rebuild model
+        while(weaponGroup.children.length) weaponGroup.remove(weaponGroup.children[0]);
+        const w = WEAPONS[name];
+        
+        const armColor = new THREE.MeshLambertMaterial({color: 0x3b5c26});
+        const gunColor = new THREE.MeshStandardMaterial({color: 0x333});
+
+        if(w.type === 'melee') {
+            const h = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,0.4), new THREE.MeshStandardMaterial({color:0x111}));
+            const b = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.1,0.7), new THREE.MeshStandardMaterial({color:0xccc, metalness:0.8}));
+            b.position.z = -0.5;
+            const arm = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.2,1.5), new THREE.MeshLambertMaterial({color:0xd2b48c})); // Skin
+            arm.position.set(0.2,-0.1,0.5);
+            weaponGroup.add(h,b,arm);
+            weaponGroup.position.set(0.5, -0.5, -1);
+        } else {
+            const len = w.type==='rifle'?2:1;
+            const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.2,len), gunColor);
+            const arm = new THREE.Mesh(new THREE.BoxGeometry(0.25,0.25,2), armColor);
+            arm.position.set(0.3,0,0.5); arm.rotation.y = -0.2;
+            weaponGroup.add(barrel, arm);
+            weaponGroup.position.set(0.5, -0.5, -1);
+        }
+        updateHUD();
+        playSound('click');
+    }
+
+    function fireWeapon() {
+        const now = performance.now();
+        const name = player.slots[player.activeSlot];
+        const stat = WEAPONS[name];
+        
+        if(player.reloading || now - player.lastShot < stat.rate) return;
+        
+        if(stat.type !== 'melee' && player.ammo[name] <= 0) {
+            playSound('click'); return;
+        }
+
+        if(stat.type !== 'melee') player.ammo[name]--;
+        player.lastShot = now;
+        updateHUD();
+        playSound(stat.sound);
+        
+        // Anim
+        weaponGroup.position.z += 0.2;
+        weaponGroup.rotation.x += 0.1;
+
+        // Hit Scan
+        const ray = new THREE.Raycaster();
+        const spread = crouch ? stat.spread * 0.5 : stat.spread;
+        ray.setFromCamera(new THREE.Vector2((Math.random()-.5)*spread, (Math.random()-.5)*spread), camera);
+        
+        const hits = ray.intersectObjects(scene.children, true);
+        let target = null;
+
+        // FIXED: Find first valid hit, stopping at walls
+        for (let h of hits) {
+            if (h.distance < 1) continue; // Skip self
+            
+            // Check if it's an enemy
+            let obj = h.object;
+            let isEnemy = false;
+            while(obj.parent && obj.parent.type !== 'Scene') {
+                if(enemies.find(e => e.mesh === obj)) isEnemy = true;
+                obj = obj.parent;
+            }
+
+            // If it's not an enemy, it must be a wall/floor/box
+            // Since hits are sorted by distance, if we hit a wall first, we stop.
+            target = h;
+            break; 
+        }
+
+        if (target) {
+            const start = weaponGroup.getWorldPosition(new THREE.Vector3());
+            start.y -= 0.1;
+            createTracer(start, target.point, 0xffff00);
+
+            let obj = target.object;
+            let rootObj = obj;
+            while(rootObj.parent && rootObj.parent.type !== 'Scene') rootObj = rootObj.parent;
+            
+            const enemy = enemies.find(e => e.mesh === rootObj);
+            
+            if (enemy) {
+                // Headshot Logic: Enemy is 10 units tall. Head is roughly top 2 units relative to pivot
+                const hitHeight = target.point.y - enemy.mesh.position.y;
+                let damage = stat.dmg;
+                let isHeadshot = hitHeight > 8.5;
+
+                if (isHeadshot) {
+                    damage *= 4;
+                    showHeadshot();
+                    playSound('headshot');
+                } else {
+                    playSound('hit');
+                }
+
+                enemy.hp -= damage;
+                enemy.flash();
+                spawnParticles(target.point, 0x880000, 5); // Blood
+
+                if(enemy.hp <= 0) killEnemy(enemy);
+            } else {
+                // Hit Wall
+                createHole(target.point, target.face.normal);
+                spawnParticles(target.point, 0xaaaaaa, 3); // Dust/Sparks
+            }
+        }
+    }
+
+    function spawnParticles(pos, color, count) {
+        for(let i=0; i<count; i++) {
+            const p = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.2,0.2), new THREE.MeshBasicMaterial({color:color}));
+            p.position.copy(pos);
+            p.velocity = new THREE.Vector3((Math.random()-.5)*10, (Math.random()-.5)*10, (Math.random()-.5)*10);
+            scene.add(p);
+            particles.push({mesh:p, life:1.0});
+        }
+    }
+
+    function showHeadshot() {
+        const el = document.getElementById('headshot-msg');
+        el.style.opacity = 1;
+        setTimeout(() => el.style.opacity = 0, 500);
+    }
+
+    function reload() {
+        const name = player.slots[player.activeSlot];
+        if(!name || WEAPONS[name].type === 'melee' || player.reloading) return;
+        if(player.ammo[name] === WEAPONS[name].clip) return;
+
+        player.reloading = true;
+        playSound('reload');
+        weaponGroup.position.y -= 0.5; // Dip
+
+        setTimeout(() => {
+            const need = WEAPONS[name].clip - player.ammo[name];
+            const take = Math.min(need, player.mags[name]);
+            player.ammo[name] += take;
+            player.mags[name] -= take;
+            player.reloading = false;
+            weaponGroup.position.y += 0.5;
+            updateHUD();
+        }, 1500);
+    }
+
+    // --- INTELLIGENT NPC ---
+    function spawnEnemy(x, y, z) {
+        const mesh = new THREE.Group();
+        
+        const legMat = new THREE.MeshLambertMaterial({color:0x222});
+        const bodyMat = new THREE.MeshLambertMaterial({color:0x800000}); 
+        const skinMat = new THREE.MeshLambertMaterial({color:0xd2b48c});
+
+        // Hitbox approx: 3w x 10h x 3d
+        const lLeg = new THREE.Mesh(new THREE.BoxGeometry(1,4,1), legMat); lLeg.position.set(-1,2,0);
+        const rLeg = new THREE.Mesh(new THREE.BoxGeometry(1,4,1), legMat); rLeg.position.set(1,2,0);
+        const torso = new THREE.Mesh(new THREE.BoxGeometry(3.5,4,2), bodyMat); torso.position.set(0,6,0);
+        const head = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), skinMat); head.position.set(0,9,0);
+        
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(1,3,1), skinMat); arm.position.set(2,6,1); arm.rotation.x = -1.5;
+        const gun = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,3), new THREE.MeshBasicMaterial({color:0x000})); gun.position.set(2,6,3);
+
+        mesh.add(lLeg, rLeg, torso, head, arm, gun);
+        mesh.position.set(x, y, z); 
+        scene.add(mesh);
+
+        const enemy = {
+            mesh: mesh, lLeg: lLeg, rLeg: rLeg,
+            hp: 100,
+            velocity: new THREE.Vector3(0,0,0),
+            lastShot: 0,
+            state: 'chase', // chase, strafe
+            strafeDir: 1,
+            changeStateTime: 0,
+            
+            flash: function() {
+                this.mesh.traverse(c => { if(c.isMesh) { c.oldHex = c.material.color.getHex(); c.material.color.setHex(0xff0000); }});
+                setTimeout(() => this.mesh.traverse(c => { if(c.isMesh && c.oldHex) c.material.color.setHex(c.oldHex); }), 100);
+            }
+        };
+        enemies.push(enemy);
+    }
+
+    function killEnemy(e) {
+        const idx = enemies.indexOf(e);
+        if (idx > -1) {
+            enemies.splice(idx, 1); 
+            scene.remove(e.mesh);
+            player.money += 300;
+            updateHUD();
+            playSound('buy'); // Reward sound
+            
+            const kf = document.getElementById('killfeed');
+            const div = document.createElement('div'); 
+            div.innerText = "Enemy Down +$300";
+            kf.appendChild(div);
+            setTimeout(()=>div.remove(),3000);
+            
+            setTimeout(() => spawnEnemy(Math.random()*100-50, 0, -150 + Math.random()*50), 3000);
+        }
+    }
+
+    // --- GAME LOOP & PHYSICS ---
+    function checkPlayerCollisions(currPos) {
+        // Cast rays horizontally from player height to detect walls
+        // 8 directions: N, NE, E, SE, S, SW, W, NW
+        const dirs = [
+            new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,-1),
+            new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0),
+            new THREE.Vector3(0.7,0,0.7), new THREE.Vector3(-0.7,0,-0.7),
+            new THREE.Vector3(0.7,0,-0.7), new THREE.Vector3(-0.7,0,0.7)
+        ];
+
+        const origin = currPos.clone();
+        origin.y -= 5; // Check at body level (player is 10 high, eye at 10, so 5 is middle)
+
+        for (let d of dirs) {
+            const ray = new THREE.Raycaster(origin, d, 0, 3); // 3 unit radius
+            const hits = ray.intersectObjects(objects);
+            if (hits.length > 0) {
+                // Found a wall close by in this direction
+                // Push velocity back against this normal
+                const normal = hits[0].face.normal;
+                // Simple projection: remove velocity component towards wall
+                if (velocity.dot(d) > 0) {
+                    // velocity.add(d.multiplyScalar(-velocity.dot(d))); 
+                    // Actually, just halt movement if trying to go into wall
+                    // But since pointer lock moves based on local, we just clamp
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        const time = performance.now();
+        const delta = Math.min((time - prevTime) / 1000, 0.1);
+        prevTime = time;
+
+        if (player.hp > 0) {
+            if (controls.isLocked) {
+                // Recoil
+                weaponGroup.rotation.x *= 0.9;
+                weaponGroup.position.z = THREE.MathUtils.lerp(weaponGroup.position.z, -1, 0.1);
+
+                // Physics
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+                velocity.y -= 9.8 * 100.0 * delta; 
+
+                direction.z = Number(moveF) - Number(moveB);
+                direction.x = Number(moveR) - Number(moveL);
+                direction.normalize();
+
+                const speed = crouch ? 300 : 600;
+                if(moveF||moveB) velocity.z -= direction.z * speed * delta;
+                if(moveL||moveR) velocity.x -= direction.x * speed * delta;
+
+                // --- WALL COLLISION FIX ---
+                // We have to peek ahead. PointerLockControls doesn't give easy "next pos".
+                // We apply gravity (Y) separate from Move (X/Z)
+                
+                // 1. Apply Vertical
+                controls.getObject().position.y += (velocity.y * delta);
+                
+                // Ground Check
+                const pHeight = crouch ? 6 : 10;
+                if (controls.getObject().position.y < pHeight) {
+                    velocity.y = 0;
+                    controls.getObject().position.y = pHeight;
+                    canJump = true;
+                }
+
+                // Box Jump Collision (Roof/Floor)
+                const rayDown = new THREE.Raycaster(controls.getObject().position, new THREE.Vector3(0,-1,0), 0, pHeight);
+                if(rayDown.intersectObjects(objects).length > 0 && velocity.y <= 0) {
+                    velocity.y = 0; canJump = true;
+                }
+
+                // 2. Apply Horizontal with Collision Check
+                const oldPos = controls.getObject().position.clone();
+                
+                controls.moveRight(-velocity.x * delta);
+                controls.moveForward(-velocity.z * delta);
+
+                // Check if new position is inside a wall
+                const rayCol = new THREE.Raycaster(controls.getObject().position, new THREE.Vector3(0,-1,0), 0, 5); // Check slightly below center
+                // Actually, simpler: check surrounding walls from center
+                // Bumping logic:
+                const bumpRay = new THREE.Raycaster();
+                const center = controls.getObject().position.clone();
+                center.y -= pHeight/2;
+                
+                // Check 4 directions
+                const cardinals = [new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0), new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,-1)];
+                let hitWall = false;
+                for(let dir of cardinals) {
+                    bumpRay.set(center, dir);
+                    const hits = bumpRay.intersectObjects(objects);
+                    if(hits.length > 0 && hits[0].distance < 2.5) {
+                        hitWall = true; break;
+                    }
+                }
+
+                if (hitWall) {
+                    // Revert horizontal movement if we hit a wall
+                    controls.getObject().position.x = oldPos.x;
+                    controls.getObject().position.z = oldPos.z;
+                    // Kill momentum
+                    velocity.x = 0;
+                    velocity.z = 0;
+                }
+
+                // Smooth Crouch
+                const targetY = crouch ? 6 : 10;
+                // controls.getObject().position.y handled by physics, but view height? 
+                // Actually physics sets feet, camera is object.
+                // So when crouched, we sink into ground? No, logic above sets Y floor to 6.
+            }
+        }
+
+        // Update Particles
+        for(let i=particles.length-1; i>=0; i--) {
+            const p = particles[i];
+            p.life -= delta;
+            p.mesh.position.add(p.mesh.velocity.clone().multiplyScalar(delta));
+            p.mesh.velocity.y -= 9.8 * delta; // Gravity
+            p.mesh.rotation.x += delta;
+            p.mesh.scale.multiplyScalar(0.95);
+            if(p.life <= 0) { scene.remove(p.mesh); particles.splice(i,1); }
+        }
+
+        // NPC Logic
+        const playerPos = controls.getObject().position;
+        enemies.forEach(e => {
+            e.velocity.y -= 9.8 * 100 * delta;
+            e.mesh.position.y += e.velocity.y * delta;
+            if (e.mesh.position.y < 0) { e.mesh.position.y = 0; e.velocity.y = 0; }
+
+            const dist = e.mesh.position.distanceTo(playerPos);
+            const vecToPlayer = new THREE.Vector3().subVectors(playerPos, e.mesh.position).normalize();
+            
+            // Simple Line of Sight Check
+            const rayLOS = new THREE.Raycaster(e.mesh.position.clone().add(new THREE.Vector3(0,8,0)), vecToPlayer, 0, dist);
+            const losHits = rayLOS.intersectObjects(objects);
+            const visible = losHits.length === 0;
+
+            if (time > e.changeStateTime) {
+                e.changeStateTime = time + 1000 + Math.random()*2000;
+                e.state = (Math.random() > 0.5 && dist < 100) ? 'strafe' : 'chase';
+                if(e.state === 'strafe') e.strafeDir = Math.random() > 0.5 ? 1 : -1;
+                if(Math.random() > 0.8 && e.mesh.position.y === 0) e.velocity.y = 40; 
+            }
+
+            let moveDir = new THREE.Vector3();
+            if (visible && e.state === 'chase' && dist > 30) moveDir.copy(vecToPlayer);
+            else if (visible && e.state === 'strafe') moveDir.crossVectors(vecToPlayer, new THREE.Vector3(0,1,0)).multiplyScalar(e.strafeDir);
+
+            const nextPos = e.mesh.position.clone().add(moveDir.clone().multiplyScalar(15 * delta));
+            // Simple NPC Wall Check
+            const npcRay = new THREE.Raycaster(e.mesh.position.clone().add(new THREE.Vector3(0,4,0)), moveDir, 0, 3);
+            if (npcRay.intersectObjects(objects).length === 0) {
+                e.mesh.position.copy(nextPos);
+            }
+            
+            e.mesh.lookAt(playerPos.x, e.mesh.position.y, playerPos.z);
+
+            if (dist < 150 && player.hp > 0 && time - e.lastShot > 1000 && visible) {
+                e.lastShot = time + Math.random() * 500;
+                const start = e.mesh.position.clone().add(new THREE.Vector3(0,7,0));
+                const end = playerPos.clone().add(new THREE.Vector3((Math.random()-.5)*5, -2, (Math.random()-.5)*5));
+                createTracer(start, end, 0xff0000);
+                playSound('enemy_fire');
+                
+                if (Math.random() > (crouch ? 0.8 : 0.6)) { // Harder to hit if crouching
+                    player.hp -= 10;
+                    updateHUD();
+                    document.getElementById('damage-flash').style.opacity = 1;
+                    setTimeout(()=>document.getElementById('damage-flash').style.opacity=0, 100);
+                    if(player.hp <= 0) playerDie();
+                }
+            }
+        });
+
+        renderer.render(scene, camera);
+    }
+
+    // --- UTILS ---
+    function playerDie() {
+        player.hp = 0;
+        player.isDead = true;
+        updateHUD();
+        controls.unlock();
+        document.getElementById('death-screen').style.display = 'block';
+        document.getElementById('start-screen').style.display = 'none';
+    }
+
+    window.respawnPlayer = function() {
+        player.hp = 100;
+        player.isDead = false;
+        player.ammo = { glock:20, deagle:7, m4a1:30, awp:10 };
+        player.slots = [null, 'glock', 'knife'];
+        player.activeSlot = 1;
+        
+        camera.position.set(0, 10, 100);
+        camera.rotation.set(0, Math.PI, 0);
+        velocity.set(0,0,0);
+        switchWeapon(1);
+        
+        document.getElementById('death-screen').style.display = 'none';
+        updateHUD();
+        controls.lock();
+    };
+
+    window.buy = function(item) {
+        const p = {glock:400, deagle:700, m4a1:3100, awp:4750}[item];
+        if(player.money >= p) {
+            player.money -= p;
+            const type = WEAPONS[item].type;
+            
+            if(type === 'rifle') { 
+                player.slots[0] = item; // Primary
+                switchWeapon(0);
+            } else if (type === 'pistol') {
+                player.slots[1] = item; // Secondary
+                switchWeapon(1);
+            }
+            // Knife stays at 2
+            
+            toggleShop();
+            playSound('buy');
+        }
+    };
+
+    function updateHUD() {
+        document.getElementById('hp').innerText = player.hp;
+        document.getElementById('money').innerText = "$ " + player.money;
+        const w = player.slots[player.activeSlot];
+        if(w) {
+            document.getElementById('wep-name').innerText = WEAPONS[w].name;
+            document.getElementById('ammo').innerText = player.ammo[w] ?? '-';
+            document.getElementById('mag').innerText = player.mags[w] ?? '-';
+        }
+    }
+
+    function createTracer(s, e, c) {
+        const g = new THREE.BufferGeometry().setFromPoints([s, e]);
+        const m = new THREE.LineBasicMaterial({ color: c });
+        const l = new THREE.Line(g, m);
+        scene.add(l);
+        setTimeout(() => scene.remove(l), 50);
+    }
+    
+    function createHole(p, n) {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(0.3,0.3), new THREE.MeshBasicMaterial({color:0x000}));
+        m.position.copy(p).add(n.multiplyScalar(0.01));
+        m.lookAt(p.clone().add(n));
+        scene.add(m);
+        setTimeout(()=>scene.remove(m), 5000);
+    }
+
+    function createTexture(c1, c2, brick, box) {
+        const c = document.createElement('canvas'); c.width=64; c.height=64;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle=c1; ctx.fillRect(0,0,64,64); ctx.fillStyle=c2;
+        if(brick) { ctx.fillRect(0,0,64,2); ctx.fillRect(0,0,2,64); ctx.fillRect(32,0,2,64); ctx.fillRect(0,32,64,2); }
+        else if(box) { ctx.strokeRect(0,0,64,64); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(64,64); ctx.stroke(); ctx.moveTo(64,0); ctx.lineTo(0,64); ctx.stroke(); }
+        else for(let i=0;i<50;i++) ctx.fillRect(Math.random()*64,Math.random()*64,2,2);
+        const t = new THREE.CanvasTexture(c); t.magFilter = THREE.NearestFilter; return t;
+    }
+
+    function playSound(id) {
+        if(audioCtx.state==='suspended') audioCtx.resume();
+        const o=audioCtx.createOscillator(); const g=audioCtx.createGain();
+        o.connect(g); g.connect(audioCtx.destination);
+        const t=audioCtx.currentTime;
+        
+        if(id==='pistol'){o.type='square';o.frequency.setValueAtTime(600,t);g.gain.exponentialRampToValueAtTime(0.01,t+0.1);o.start();o.stop(t+0.1);}
+        else if(id==='rifle'){o.type='sawtooth';o.frequency.setValueAtTime(200,t);g.gain.exponentialRampToValueAtTime(0.01,t+0.1);o.start();o.stop(t+0.1);}
+        else if(id==='enemy_fire'){o.type='square';o.frequency.setValueAtTime(150,t);g.gain.setValueAtTime(0.1,t);g.gain.exponentialRampToValueAtTime(0.01,t+0.1);o.start();o.stop(t+0.1);}
+        else if(id==='reload'||id==='buy'){o.type='sine';o.frequency.setValueAtTime(400,t);g.gain.setValueAtTime(0.1,t);g.gain.linearRampToValueAtTime(0,t+0.3);o.start();o.stop(t+0.3);}
+        else if(id==='hit'){o.type='sawtooth';o.frequency.setValueAtTime(800,t);g.gain.setValueAtTime(0.2,t);g.gain.exponentialRampToValueAtTime(0.01,t+0.1);o.start();o.stop(t+0.1);}
+        else if(id==='click'){o.type='square';o.frequency.setValueAtTime(1000,t);g.gain.setValueAtTime(0.05,t);o.start();o.stop(t+0.05);}
+        else if(id==='headshot'){ // CRUNCH sound
+            o.type='sawtooth';
+            o.frequency.setValueAtTime(1200,t);
+            o.frequency.exponentialRampToValueAtTime(100,t+0.1);
+            g.gain.setValueAtTime(0.3,t);
+            g.gain.exponentialRampToValueAtTime(0.01,t+0.15);
+            o.start();o.stop(t+0.15);
+        }
+    }
+
+    window.toggleMusic = function() {
+        if(musicPlaying) {
+            bgmOscillators.forEach(o => o.stop());
+            bgmOscillators = [];
+            musicPlaying = false;
+        } else {
+            musicPlaying = true;
+            playBGM();
+        }
+    };
+
+    function playBGM() {
+        if(!musicPlaying) return;
+        const t = audioCtx.currentTime;
+        const tempo = 0.25;
+        const notes = [110, 110, 130, 110, 165, 146, 130, 110];
+        
+        notes.forEach((freq, i) => {
+            const o = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            o.type = 'square';
+            o.frequency.value = freq;
+            o.connect(g);
+            g.connect(audioCtx.destination);
+            
+            const start = t + i * tempo;
+            g.gain.setValueAtTime(0.05, start);
+            g.gain.exponentialRampToValueAtTime(0.001, start + 0.1);
+            
+            o.start(start);
+            o.stop(start + 0.2);
+            bgmOscillators.push(o);
+        });
+        setTimeout(playBGM, notes.length * tempo * 1000);
+    }
+
+    function onKeyDown(e) {
+        if(e.code==='KeyW') moveF=true; if(e.code==='KeyS') moveB=true;
+        if(e.code==='KeyA') moveL=true; if(e.code==='KeyD') moveR=true;
+        if(e.code==='Space'&&canJump){velocity.y+=200;canJump=false;}
+        if(e.code==='KeyR') reload(); if(e.code==='KeyB') toggleShop();
+        if(e.code==='Digit1') switchWeapon(0); // Primary
+        if(e.code==='Digit2') switchWeapon(1); // Pistol
+        if(e.code==='Digit3') switchWeapon(2); // Knife
+        if(e.code==='ControlLeft') crouch=true;
+        if(e.code==='KeyM') toggleMusic();
+    }
+    function onKeyUp(e) {
+        if(e.code==='KeyW') moveF=false; if(e.code==='KeyS') moveB=false;
+        if(e.code==='KeyA') moveL=false; if(e.code==='KeyD') moveR=false;
+        if(e.code==='ControlLeft') crouch=false;
+    }
+    function toggleShop() {
+        const m = document.getElementById('shop-menu');
+        if(m.style.display==='block'){m.style.display='none'; controls.lock();}
+        else{m.style.display='block'; controls.unlock();}
+    }
+</script>
+</body>
+</html>
