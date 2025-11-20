@@ -2,6 +2,8 @@ import * as THREE from 'three';
 
 // Global State Container
 export const state = {
+    gameMode: 'single', // 'single' or 'multi'
+    
     camera: null,
     scene: null,
     renderer: null,

@@ -40,7 +40,11 @@ io.on('connection', (socket) => {
             id: socket.id,
             name: name || `Player ${socket.id.substr(0,4)}`,
             x: 0, y: 10, z: 0,
-            hp: 100
+            hp: 100,
+            isDead: false,
+            kills: 0,
+            deaths: 0,
+            lastAction: Date.now()
         };
 
         socket.emit('joined', { id: socket.id, players: rooms[room].players });
@@ -58,11 +62,23 @@ io.on('connection', (socket) => {
                 }
             }
         });
+        
+        // Track activity
+        const updateActivity = () => {
+            if(rooms[room] && rooms[room].players[socket.id]) {
+                rooms[room].players[socket.id].lastAction = Date.now();
+            }
+        };
 
         // Handle Updates
         socket.on('update', (data) => {
             if (rooms[room] && rooms[room].players[socket.id]) {
                 const p = rooms[room].players[socket.id];
+                // Check if position changed significantly to count as activity
+                if(Math.abs(p.x - data.x) > 0.1 || Math.abs(p.z - data.z) > 0.1 || Math.abs(p.ry - data.ry) > 0.1) {
+                     p.lastAction = Date.now();
+                }
+                
                 p.x = data.x; p.y = data.y; p.z = data.z;
                 p.rx = data.rx; p.ry = data.ry;
                 // Broadcast to others (volatile for performance)
@@ -70,8 +86,25 @@ io.on('connection', (socket) => {
             }
         });
 
+        // Handle Chat
+        socket.on('chat_message', (msg) => {
+            updateActivity();
+            io.to(room).emit('chat_message', { id: socket.id, name: rooms[room].players[socket.id].name, msg });
+        });
+
+        // Handle Respawn
+        socket.on('respawn', () => {
+            updateActivity();
+            if (rooms[room] && rooms[room].players[socket.id]) {
+                rooms[room].players[socket.id].hp = 100;
+                rooms[room].players[socket.id].isDead = false;
+                io.to(room).emit('player_respawn', socket.id);
+            }
+        });
+
         // Handle Actions
         socket.on('shoot', (data) => {
+            updateActivity();
             socket.to(room).emit('remote_shoot', { id: socket.id, ...data });
         });
         
@@ -79,18 +112,62 @@ io.on('connection', (socket) => {
             // data: { targetId, damage }
             if (rooms[room] && rooms[room].players[data.targetId]) {
                 const target = rooms[room].players[data.targetId];
+                const attackerId = socket.id; // Use local var to be safe
                 target.hp -= data.damage;
-                io.to(room).emit('player_damaged', { id: data.targetId, hp: target.hp, attackerId: socket.id });
+                io.to(room).emit('player_damaged', { id: data.targetId, hp: target.hp, attackerId: attackerId });
                 
                 if (target.hp <= 0) {
                     // Reset HP for respawn logic if needed, or let client handle
-                    target.hp = 100; // Simple auto-reset server side tracking
-                    io.to(room).emit('player_died', { id: data.targetId, attackerId: socket.id });
+                    target.hp = 0; // Keep at 0 to mark as dead
+                    target.isDead = true;
+                    target.deaths++;
+                    if(rooms[room].players[attackerId]) rooms[room].players[attackerId].kills++;
+                    
+                    io.to(room).emit('player_died', { 
+                        id: data.targetId, 
+                        attackerId: attackerId,
+                        kills: rooms[room].players[attackerId]?.kills || 0,
+                        deaths: target.deaths
+                    });
+                    
+                    // Broadcast updated scoreboard data
+                    io.to(room).emit('scoreboard_update', rooms[room].players);
                 }
             }
         });
     });
 });
+
+// Check for inactive players every 1 second
+setInterval(() => {
+    const now = Date.now();
+    Object.keys(rooms).forEach(roomId => {
+        const room = rooms[roomId];
+        Object.keys(room.players).forEach(socketId => {
+            const p = room.players[socketId];
+            const idleTime = now - p.lastAction;
+            
+            // Warning at 20s (10s before kick)
+            if (idleTime > 20000 && idleTime < 21000) {
+                io.to(socketId).emit('chat_message', { 
+                    id: 'server', 
+                    name: 'SERVER', 
+                    msg: '<span style="color:red">Warning: You will be kicked in 10s for inactivity!</span>' 
+                });
+            }
+            
+            // Kick at 30s
+            if (idleTime > 30000) {
+                const socket = io.sockets.sockets.get(socketId);
+                if (socket) {
+                    socket.emit('error_msg', 'You were kicked for being idle (30s). Refresh to rejoin.');
+                    socket.disconnect();
+                }
+                // Cleanup happens in disconnect handler
+            }
+        });
+    });
+}, 1000);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

@@ -18,15 +18,33 @@
     </div>
     <div id="money">$ 800</div>
     <div id="killfeed"></div>
+    
+    <!-- CHAT -->
+    <div id="chat-container">
+        <div id="chat-history"></div>
+        <input type="text" id="chat-input" placeholder="Press Enter to send..." maxlength="100">
+    </div>
+    
+    <!-- SCOREBOARD -->
+    <div id="scoreboard" style="display:none;">
+        <h3>SCOREBOARD</h3>
+        <table id="scoreboard-list" style="width:100%; border-collapse:collapse;">
+            <!-- Rows injected by JS -->
+        </table>
+    </div>
 </div>
 
 <!-- LOGIN MODAL -->
 <div id="login-modal">
-    <h1>CS 1.6 WEB: MULTIPLAYER</h1>
-    <input type="text" id="player-name" placeholder="Enter Your Name" maxlength="15">
-    <input type="text" id="room-name" placeholder="Room ID (Default: default)" maxlength="10">
-    <div class="menu-btn" id="login-btn">JOIN GAME</div>
-    <p style="font-size: 12px; color: #888;">Max 5 Players per Room</p>
+    <h1>CS 1.6 WEB: GAME MODES</h1>
+    <input type="text" id="player-name" placeholder="Enter Name (for Multiplayer)" maxlength="15">
+    
+    <div style="display: flex; gap: 20px;">
+        <div class="menu-btn" id="singleplayer-btn">SINGLE PLAYER (vs Bots)</div>
+        <div class="menu-btn" id="multiplayer-btn">MULTIPLAYER (vs People)</div>
+    </div>
+    
+    <p style="font-size: 12px; color: #888;">Multiplayer connects to global room.</p>
 </div>
 
 <!-- SHOP -->

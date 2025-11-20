@@ -9,12 +9,20 @@ export class RemotePlayer {
         this.id = id;
         this.name = name;
         this.mesh = new THREE.Group();
+        this.isDead = false;
         
-        // Body
-        const bodyMat = new THREE.MeshLambertMaterial({color: 0x0000ff}); // Blue for others
-        const body = new THREE.Mesh(new THREE.BoxGeometry(3.5, 10, 2), bodyMat);
-        body.position.y = 5; // Center is at 0,0,0
-        this.mesh.add(body);
+        // Body (Split into Torso and Legs for better visual grounding)
+        const bodyMat = new THREE.MeshLambertMaterial({color: 0x0000ff}); 
+        
+        // Legs
+        const legs = new THREE.Mesh(new THREE.BoxGeometry(3.5, 5, 2), new THREE.MeshLambertMaterial({color: 0x0000aa}));
+        legs.position.y = 2.5;
+        this.mesh.add(legs);
+
+        // Torso
+        const torso = new THREE.Mesh(new THREE.BoxGeometry(3.5, 5, 2), bodyMat);
+        torso.position.y = 7.5;
+        this.mesh.add(torso);
 
         // Head
         const head = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshLambertMaterial({color:0xd2b48c}));
@@ -27,9 +35,16 @@ export class RemotePlayer {
         this.mesh.add(this.nameTag);
 
         // Position
-        this.mesh.position.set(startData.x || 0, startData.y || 0, startData.z || 0);
+        // FIX: StartData.y is camera height (10), so feet should be at y-10.
+        this.mesh.position.set(startData.x || 0, (startData.y || 0) - 10, startData.z || 0);
         
         state.scene.add(this.mesh);
+        
+        // Handle initial dead state
+        if (startData.isDead || (startData.hp !== undefined && startData.hp <= 0)) {
+            this.isDead = true;
+            state.scene.remove(this.mesh);
+        }
         
         // Interpolation buffer
         this.targetPos = this.mesh.position.clone();
@@ -56,37 +71,36 @@ export class RemotePlayer {
     }
 
     update(delta) {
+        if (this.isDead) return;
         // Simple Lerp for smoothness
         this.mesh.position.lerp(this.targetPos, 10 * delta);
         // Rotate body only on Y
-        // this.mesh.rotation.y = THREE.MathUtils.lerp(this.mesh.rotation.y, this.targetRot, 10 * delta);
-        // Better to just set rotation or implement quaternions if full rotation needed
         this.mesh.rotation.y = this.targetRot; 
     }
 
     setTarget(data) {
-        this.targetPos.set(data.x, data.y, data.z);
+        // FIX: data.y is camera height, offset by -10 for feet
+        this.targetPos.set(data.x, data.y - 10, data.z);
         this.targetRot = data.ry;
-        // Could also animate pitch (rx) if we had separate head/arms
     }
     
     shoot(data) {
+        if (this.isDead) return;
         // Visual flash or sound coming from this player
-        playSound('enemy_fire'); // Reuse existing sound
-        // Maybe show a muzzle flash
+        playSound('enemy_fire'); 
     }
     
     die() {
-        // Animation or ragdoll? Just hide for now
-        this.mesh.visible = false;
+        this.isDead = true;
+        state.scene.remove(this.mesh);
     }
     
     respawn() {
-        this.mesh.visible = true;
+        this.isDead = false;
+        state.scene.add(this.mesh);
     }
 
     dispose() {
         state.scene.remove(this.mesh);
     }
 }
-

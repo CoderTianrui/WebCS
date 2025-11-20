@@ -37,6 +37,14 @@ export function spawnEnemy(x, y, z) {
             setTimeout(() => this.mesh.traverse(c => { if(c.isMesh && c.oldHex) c.material.color.setHex(c.oldHex); }), 100);
         }
     };
+    
+    // LINK MESH TO ENEMY OBJECT FOR HIT DETECTION
+    mesh.userData = { type: 'enemy', entity: enemy };
+    // Also tag children so we don't have to traverse too far if not needed (though parent traversal is fine)
+    mesh.traverse((child) => {
+        child.userData.parentEnemy = enemy;
+    });
+
     state.enemies.push(enemy);
 }
 
@@ -55,7 +63,15 @@ export function killEnemy(e) {
         kf.appendChild(div);
         setTimeout(()=>div.remove(),3000);
         
-        setTimeout(() => spawnEnemy(Math.random()*100-50, 0, -150 + Math.random()*50), 3000);
+        // Respawn logic - ONLY IN SINGLE PLAYER
+        if(state.gameMode === 'single') {
+            setTimeout(() => spawnEnemy(Math.random()*100-50, 0, -150 + Math.random()*50), 3000);
+        }
     }
 }
 
+export function clearEnemies() {
+    // Remove all existing enemies
+    state.enemies.forEach(e => state.scene.remove(e.mesh));
+    state.enemies = [];
+}

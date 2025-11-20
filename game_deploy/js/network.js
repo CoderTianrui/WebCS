@@ -5,7 +5,7 @@ import { updateHUD } from './ui.js';
 
 // --- CONFIGURATION ---
 // CHANGE THIS TO YOUR RENDER URL ONCE DEPLOYED
-const PRODUCTION_SERVER_URL = "https://REPLACE-ME-WITH-YOUR-RENDER-URL.onrender.com"; 
+const PRODUCTION_SERVER_URL = "https://webcs-6js9.onrender.com"; 
 
 export const network = {
     connect: (name, room) => {
@@ -15,12 +15,8 @@ export const network = {
         if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
              serverUrl = 'http://localhost:3000';
         } else {
-            // Check if the production URL has been set
-            if (PRODUCTION_SERVER_URL.includes("REPLACE-ME")) {
-                serverUrl = prompt("Enter Server URL (e.g. https://my-game-server.onrender.com)", "http://localhost:3000");
-            } else {
-                serverUrl = PRODUCTION_SERVER_URL;
-            }
+            // Use production URL
+            serverUrl = PRODUCTION_SERVER_URL;
         }
 
         if(!serverUrl) return;
@@ -39,7 +35,7 @@ export const network = {
         });
 
         state.socket.on('connect_error', (err) => {
-             alert("Failed to connect to server: " + serverUrl + "\nCheck console for details.");
+             alert("Failed to connect to server. Multiplayer unavailable.");
              console.error(err);
         });
 
@@ -98,6 +94,33 @@ export const network = {
             }
         });
 
+        s.on('player_respawn', (id) => {
+             if(state.remotePlayers[id]) {
+                 state.remotePlayers[id].respawn();
+             }
+        });
+        
+        s.on('chat_message', (data) => {
+             // data: { id, name, msg }
+             const chatBox = document.getElementById('chat-history');
+             if(chatBox) {
+                 const line = document.createElement('div');
+                 line.innerHTML = `<span style="color:#aaa">&lt;${data.name}&gt;</span> ${data.msg}`;
+                 chatBox.appendChild(line);
+                 chatBox.scrollTop = chatBox.scrollHeight;
+             }
+        });
+
+        s.on('scoreboard_update', (players) => {
+             // Update global scoreboard data
+             state.scoreboardData = players;
+             // If visible, update UI
+             const sb = document.getElementById('scoreboard');
+             if(sb && sb.style.display === 'block') {
+                 updateScoreboardUI(); 
+             }
+        });
+
         s.on('player_died', (data) => {
              if (data.id === state.id) {
                  // I died
@@ -145,5 +168,51 @@ export const network = {
     sendHit: (targetId, damage) => {
         if(!state.socket) return;
         state.socket.emit('hit', { targetId, damage });
+    },
+    
+    sendRespawn: () => {
+        if(!state.socket) return;
+        state.socket.emit('respawn');
+    },
+
+    sendChat: (msg) => {
+        if(!state.socket) return;
+        state.socket.emit('chat_message', msg);
     }
 };
+
+// Helper to update Scoreboard UI (called from ui.js or network)
+export function updateScoreboardUI() {
+    const sb = document.getElementById('scoreboard-list');
+    if(!sb || !state.scoreboardData) return;
+    
+    sb.innerHTML = `
+        <tr style="color:#ffb93b; border-bottom:1px solid #555;">
+            <th style="text-align:left; padding:5px;">NAME</th>
+            <th style="padding:5px;">KILLS</th>
+            <th style="padding:5px;">DEATHS</th>
+            <th style="padding:5px;">PING</th>
+        </tr>
+    `;
+    
+    // Add self
+    const myKills = state.player.kills || 0; // Need to track local kills/deaths or rely on server data
+    // Actually server sends all data including self in 'scoreboard_update'
+    
+    Object.values(state.scoreboardData).sort((a,b)=>b.kills-a.kills).forEach(p => {
+        const row = document.createElement('tr');
+        const isMe = p.id === state.id;
+        row.style.color = isMe ? '#00ff00' : 'white';
+        // Ping is fake for now or we can add latency later. 
+        // Let's show a random realistic ping for others, 15ms for self
+        const ping = isMe ? 15 : Math.floor(Math.random()*50 + 20); 
+        
+        row.innerHTML = `
+            <td style="text-align:left; padding:5px;">${p.name}</td>
+            <td style="text-align:center; padding:5px;">${p.kills||0}</td>
+            <td style="text-align:center; padding:5px;">${p.deaths||0}</td>
+            <td style="text-align:center; padding:5px;">${ping}</td>
+        `;
+        sb.appendChild(row);
+    });
+}

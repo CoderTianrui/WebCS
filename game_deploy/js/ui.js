@@ -1,29 +1,34 @@
 import { network } from './network.js';
-
-// ... existing imports ...
-
-export function initLoginUI() {
-    const btn = document.getElementById('login-btn');
-    const nameInput = document.getElementById('player-name');
-    const roomInput = document.getElementById('room-name');
-
-    btn.addEventListener('click', () => {
-        const name = nameInput.value.trim();
-        const room = roomInput.value.trim() || 'default';
-        
-        if (name.length > 0) {
-            network.connect(name, room);
-        } else {
-            alert("Please enter a name");
-        }
-    });
-}
-
-// ... existing functions ...
 import { WEAPONS } from './constants.js';
 import { state } from './state.js';
 import { switchWeapon } from './player.js';
 import { playSound } from './audio.js';
+import { startSinglePlayer } from './main.js';
+
+export function initLoginUI() {
+    const mpBtn = document.getElementById('multiplayer-btn');
+    const spBtn = document.getElementById('singleplayer-btn');
+    const nameInput = document.getElementById('player-name');
+    const menuDiv = document.getElementById('login-modal');
+
+    // MULTIPLAYER JOIN
+    mpBtn.addEventListener('click', () => {
+        const name = nameInput.value.trim();
+        
+        if (name.length > 0) {
+            state.gameMode = 'multi';
+            // Connect to 'global' room
+            network.connect(name, 'global');
+        } else {
+            alert("Please enter a name for Multiplayer");
+        }
+    });
+
+    // SINGLE PLAYER START
+    spBtn.addEventListener('click', () => {
+        startSinglePlayer();
+    });
+}
 
 export function updateHUD() {
     document.getElementById('hp').innerText = state.player.hp;

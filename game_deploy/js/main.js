@@ -4,34 +4,19 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { state } from './state.js';
 import { buildMap } from './map.js';
 import { createWeaponModel, switchWeapon, fireWeapon, onKeyDown, onKeyUp } from './player.js';
-import { spawnEnemy, killEnemy } from './entities.js';
+import { spawnEnemy, killEnemy, clearEnemies } from './entities.js';
 import { updateHUD } from './ui.js';
 import { playSound, toggleMusic } from './audio.js';
 import { createTracer } from './utils.js';
-import { network } from './network.js'; // Import network
+import { network } from './network.js';
+import { initLoginUI } from './ui.js';
+import rendererInstance from './renderer.js';
 
 // Global collision checker (moved from game.js)
 function checkPlayerCollisions(currPos) {
-    const dirs = [
-        new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,-1),
-        new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0),
-        new THREE.Vector3(0.7,0,0.7), new THREE.Vector3(-0.7,0,-0.7),
-        new THREE.Vector3(0.7,0,-0.7), new THREE.Vector3(-0.7,0,0.7)
-    ];
-
-    const origin = currPos.clone();
-    origin.y -= 5; 
-
-    for (let d of dirs) {
-        const ray = new THREE.Raycaster(origin, d, 0, 3);
-        const hits = ray.intersectObjects(state.objects);
-        if (hits.length > 0) {
-            const normal = hits[0].face.normal;
-            if (state.velocity.dot(d) > 0) {
-                return true;
-            }
-        }
-    }
+    // ... (Keep existing logic if needed, but currently mostly unused in favor of simple wall checks inside animate)
+    // Actually, we'll leave it as is or remove if not used. 
+    // The wall logic is inline in animate.
     return false;
 }
 
@@ -118,11 +103,12 @@ function animate() {
                 state.velocity.z = 0;
             }
 
-            // Send Network Update
-            // We send current camera position and rotation (Y only for body)
-            const camPos = state.controls.getObject().position;
-            const camRot = state.camera.rotation;
-            network.sendUpdate(camPos, camRot);
+            // Send Network Update if Multiplayer
+            if (state.gameMode === 'multi') {
+                const camPos = state.controls.getObject().position;
+                const camRot = state.camera.rotation;
+                network.sendUpdate(camPos, camRot);
+            }
         }
     }
 
@@ -140,59 +126,73 @@ function animate() {
     // Update Remote Players
     Object.values(state.remotePlayers).forEach(p => p.update(delta));
 
-    // NPC Logic
-    const playerPos = state.controls.getObject().position;
-    state.enemies.forEach(e => {
-        e.velocity.y -= 9.8 * 100 * delta;
-        e.mesh.position.y += e.velocity.y * delta;
-        if (e.mesh.position.y < 0) { e.mesh.position.y = 0; e.velocity.y = 0; }
+    // NPC Logic (Only in Single Player)
+    if (state.gameMode === 'single') {
+        const playerPos = state.controls.getObject().position;
+        state.enemies.forEach(e => {
+            e.velocity.y -= 9.8 * 100 * delta;
+            e.mesh.position.y += e.velocity.y * delta;
+            if (e.mesh.position.y < 0) { e.mesh.position.y = 0; e.velocity.y = 0; }
 
-        const dist = e.mesh.position.distanceTo(playerPos);
-        const vecToPlayer = new THREE.Vector3().subVectors(playerPos, e.mesh.position).normalize();
-        
-        // Simple Line of Sight Check
-        const rayLOS = new THREE.Raycaster(e.mesh.position.clone().add(new THREE.Vector3(0,8,0)), vecToPlayer, 0, dist);
-        const losHits = rayLOS.intersectObjects(state.objects);
-        const visible = losHits.length === 0;
-
-        if (time > e.changeStateTime) {
-            e.changeStateTime = time + 1000 + Math.random()*2000;
-            e.state = (Math.random() > 0.5 && dist < 100) ? 'strafe' : 'chase';
-            if(e.state === 'strafe') e.strafeDir = Math.random() > 0.5 ? 1 : -1;
-            if(Math.random() > 0.8 && e.mesh.position.y === 0) e.velocity.y = 40; 
-        }
-
-        let moveDir = new THREE.Vector3();
-        if (visible && e.state === 'chase' && dist > 30) moveDir.copy(vecToPlayer);
-        else if (visible && e.state === 'strafe') moveDir.crossVectors(vecToPlayer, new THREE.Vector3(0,1,0)).multiplyScalar(e.strafeDir);
-
-        const nextPos = e.mesh.position.clone().add(moveDir.clone().multiplyScalar(15 * delta));
-        // Simple NPC Wall Check
-        const npcRay = new THREE.Raycaster(e.mesh.position.clone().add(new THREE.Vector3(0,4,0)), moveDir, 0, 3);
-        if (npcRay.intersectObjects(state.objects).length === 0) {
-            e.mesh.position.copy(nextPos);
-        }
-        
-        e.mesh.lookAt(playerPos.x, e.mesh.position.y, playerPos.z);
-
-        if (dist < 150 && state.player.hp > 0 && time - e.lastShot > 1000 && visible) {
-            e.lastShot = time + Math.random() * 500;
-            const start = e.mesh.position.clone().add(new THREE.Vector3(0,7,0));
-            const end = playerPos.clone().add(new THREE.Vector3((Math.random()-.5)*5, -2, (Math.random()-.5)*5));
-            createTracer(start, end, 0xff0000);
-            playSound('enemy_fire');
+            const dist = e.mesh.position.distanceTo(playerPos);
+            const vecToPlayer = new THREE.Vector3().subVectors(playerPos, e.mesh.position).normalize();
             
-            if (Math.random() > (state.crouch ? 0.8 : 0.6)) { // Harder to hit if crouching
-                state.player.hp -= 10;
-                updateHUD();
-                document.getElementById('damage-flash').style.opacity = 1;
-                setTimeout(()=>document.getElementById('damage-flash').style.opacity=0, 100);
-                if(state.player.hp <= 0) playerDie();
+            // Simple Line of Sight Check
+            const rayLOS = new THREE.Raycaster(e.mesh.position.clone().add(new THREE.Vector3(0,8,0)), vecToPlayer, 0, dist);
+            const losHits = rayLOS.intersectObjects(state.objects);
+            const visible = losHits.length === 0;
+
+            if (time > e.changeStateTime) {
+                e.changeStateTime = time + 1000 + Math.random()*2000;
+                e.state = (Math.random() > 0.5 && dist < 100) ? 'strafe' : 'chase';
+                if(e.state === 'strafe') e.strafeDir = Math.random() > 0.5 ? 1 : -1;
+                if(Math.random() > 0.8 && e.mesh.position.y === 0) e.velocity.y = 40; 
             }
-        }
-    });
+
+            let moveDir = new THREE.Vector3();
+            if (visible && e.state === 'chase' && dist > 30) moveDir.copy(vecToPlayer);
+            else if (visible && e.state === 'strafe') moveDir.crossVectors(vecToPlayer, new THREE.Vector3(0,1,0)).multiplyScalar(e.strafeDir);
+
+            const nextPos = e.mesh.position.clone().add(moveDir.clone().multiplyScalar(15 * delta));
+            // Simple NPC Wall Check
+            const npcRay = new THREE.Raycaster(e.mesh.position.clone().add(new THREE.Vector3(0,4,0)), moveDir, 0, 3);
+            if (npcRay.intersectObjects(state.objects).length === 0) {
+                e.mesh.position.copy(nextPos);
+            }
+            
+            e.mesh.lookAt(playerPos.x, e.mesh.position.y, playerPos.z);
+
+            if (dist < 150 && state.player.hp > 0 && time - e.lastShot > 1000 && visible) {
+                e.lastShot = time + Math.random() * 500;
+                const start = e.mesh.position.clone().add(new THREE.Vector3(0,7,0));
+                const end = playerPos.clone().add(new THREE.Vector3((Math.random()-.5)*5, -2, (Math.random()-.5)*5));
+                createTracer(start, end, 0xff0000);
+                playSound('enemy_fire');
+                
+                if (Math.random() > (state.crouch ? 0.8 : 0.6)) { // Harder to hit if crouching
+                    state.player.hp -= 10;
+                    updateHUD();
+                    document.getElementById('damage-flash').style.opacity = 1;
+                    setTimeout(()=>document.getElementById('damage-flash').style.opacity=0, 100);
+                    if(state.player.hp <= 0) playerDie();
+                }
+            }
+        });
+    }
 
     state.renderer.render(state.scene, state.camera);
+}
+
+export function startSinglePlayer() {
+    state.gameMode = 'single';
+    clearEnemies();
+    // Spawn NPCs
+    spawnEnemy(0, 0, -150);
+    spawnEnemy(-30, 0, -150);
+    spawnEnemy(30, 0, -150);
+    
+    document.getElementById('login-modal').style.display = 'none';
+    document.getElementById('start-screen').style.display = 'flex';
 }
 
 function init() {
@@ -222,8 +222,10 @@ function init() {
     });
 
     state.controls.addEventListener('unlock', () => {
-        // Only show menu if we are logged in (have socket) and not dead
-        if (state.socket && !state.player.isDead && document.getElementById('shop-menu').style.display !== 'block') {
+        const chatVisible = document.getElementById('chat-input').style.display === 'block';
+        if (!state.player.isDead && 
+            document.getElementById('shop-menu').style.display !== 'block' && 
+            !chatVisible) {
             document.getElementById('start-screen').style.display = 'flex';
         }
     });
@@ -242,28 +244,20 @@ function init() {
     createWeaponModel();
     switchWeapon(1); // Start with Glock
 
-    // NPCs
-    spawnEnemy(0, 0, -150);
-    spawnEnemy(-30, 0, -150);
-    spawnEnemy(30, 0, -150);
-
     // Renderer
-    state.renderer = new THREE.WebGLRenderer({ antialias: true });
-    state.renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(state.renderer.domElement);
+    state.renderer = rendererInstance.getRenderer();
     
     window.addEventListener('resize', () => {
         state.camera.aspect = window.innerWidth/window.innerHeight;
         state.camera.updateProjectionMatrix();
-        state.renderer.setSize(window.innerWidth, window.innerHeight);
+        // renderer resize handled by singleton
     });
     updateHUD();
     
-    // NOTE: We do NOT start animate immediately if we want to wait for login?
-    // Actually, animate runs physics. We can run it, but controls are locked until login.
-    // BUT, we want to show Login Modal first.
-    
     animate();
+    
+    // Init UI listeners
+    initLoginUI();
     
     // Show login
     document.getElementById('start-screen').style.display = 'none'; // Hide start screen initially

@@ -2,11 +2,11 @@ import * as THREE from 'three';
 import { WEAPONS } from './constants.js';
 import { state } from './state.js';
 import { playSound } from './audio.js';
-import { updateHUD, toggleShop } from './ui.js'; // toggleShop needed for key bind
+import { updateHUD, toggleShop } from './ui.js';
 import { createTracer, createHole, spawnParticles, showHeadshot } from './utils.js';
-import { killEnemy, spawnEnemy } from './entities.js'; 
-import { toggleMusic } from './audio.js'; // for key bind
-import { network } from './network.js'; // NEW: Network actions
+import { killEnemy } from './entities.js'; 
+import { toggleMusic } from './audio.js';
+import { network, updateScoreboardUI } from './network.js';
 
 export function createWeaponModel() {
     if(state.weaponGroup) state.camera.remove(state.weaponGroup);
@@ -64,8 +64,10 @@ export function fireWeapon() {
     updateHUD();
     playSound(stat.sound);
     
-    // Notify Network
-    network.sendShoot();
+    // Notify Network if Multiplayer
+    if(state.gameMode === 'multi') {
+        network.sendShoot();
+    }
     
     // Anim
     state.weaponGroup.position.z += 0.2;
@@ -76,63 +78,108 @@ export function fireWeapon() {
     const spread = state.crouch ? stat.spread * 0.5 : stat.spread;
     ray.setFromCamera(new THREE.Vector2((Math.random()-.5)*spread, (Math.random()-.5)*spread), state.camera);
     
+    // Intersect everything
     const hits = ray.intersectObjects(state.scene.children, true);
-    let target = null;
+    let targetHit = null;
+    let hitEnemy = null;
+    let hitRemotePlayerId = null;
 
-    // FIXED: Find first valid hit, stopping at walls
+    // FIXED HIT DETECTION LOGIC
     for (let h of hits) {
-        if (h.distance < 1) continue; // Skip self
+        if (h.distance < 1) continue; // Skip self/close artifacts
         
-        // Check if it's an enemy (NPC)
         let obj = h.object;
-        let isEnemy = false;
-        let isRemotePlayer = false;
-        let remotePlayerId = null;
-
-        while(obj.parent && obj.parent.type !== 'Scene') {
-            if(state.enemies.find(e => e.mesh === obj)) isEnemy = true;
-            // Check for Remote Players
-            const foundId = Object.keys(state.remotePlayers).find(id => state.remotePlayers[id].mesh === obj);
-            if (foundId) {
-                isRemotePlayer = true;
-                remotePlayerId = foundId;
-            }
-            obj = obj.parent;
+        
+        // 1. Check for NPC Enemy (using userData we added in entities.js)
+        if (obj.userData && obj.userData.parentEnemy) {
+            targetHit = h;
+            hitEnemy = obj.userData.parentEnemy;
+            break; // Hit an enemy, stop ray
+        }
+        // Also check if we hit the group itself (rare but possible)
+        if (obj.userData && obj.userData.entity) {
+            targetHit = h;
+            hitEnemy = obj.userData.entity;
+            break;
         }
 
-        target = h;
-        target.isEnemy = isEnemy;
-        target.isRemotePlayer = isRemotePlayer;
-        target.remoteId = remotePlayerId;
-        break; 
+        // 2. Check for Remote Player (Multiplayer)
+        // We need to traverse up to find the group that represents a player
+        let remoteId = null;
+        let tempObj = obj;
+        while(tempObj) {
+            // We need a way to identify remote player meshes. 
+            // In remote_player.js, we didn't add userData. Let's assume we can find it by reference.
+            const foundId = Object.keys(state.remotePlayers).find(id => state.remotePlayers[id].mesh === tempObj);
+            if (foundId) {
+                remoteId = foundId;
+                break;
+            }
+            tempObj = tempObj.parent;
+        }
+
+        if (remoteId) {
+            if (state.gameMode === 'multi') {
+                targetHit = h;
+                hitRemotePlayerId = remoteId;
+                break;
+            } else {
+                // In single player, ignore remote players (shouldn't exist anyway)
+                continue;
+            }
+        }
+
+        // 3. Check for Wall/Environment
+        // If we didn't hit an enemy/player, and we hit something else, it's a wall.
+        // BUT, we must ensure we don't stop on "invisible" things or helpers.
+        // Check if it's in state.objects (walls/floor)
+        let isWall = false;
+        // state.objects contains meshes.
+        if (state.objects.includes(obj)) isWall = true;
+        
+        if (isWall || obj.isWall || (obj.parent && obj.parent.type === 'Scene')) {
+             // Hit map geometry
+             targetHit = h;
+             break; // Stop at wall
+        }
     }
 
-    if (target) {
+    if (targetHit) {
         const start = state.weaponGroup.getWorldPosition(new THREE.Vector3());
         start.y -= 0.1;
-        createTracer(start, target.point, 0xffff00);
+        createTracer(start, targetHit.point, 0xffff00);
 
-        if (target.isEnemy) {
-            // NPC Logic (Local)
-            let obj = target.object;
-            let rootObj = obj;
-            while(rootObj.parent && rootObj.parent.type !== 'Scene') rootObj = rootObj.parent;
-            const enemy = state.enemies.find(e => e.mesh === rootObj);
-            if (enemy) {
-                enemy.hp -= stat.dmg;
-                enemy.flash();
-                spawnParticles(target.point, 0x880000, 5);
-                if(enemy.hp <= 0) killEnemy(enemy);
+        if (hitEnemy && state.gameMode === 'single') {
+            // Hit NPC
+            // Headshot Logic?
+            const enemy = hitEnemy;
+            const hitHeight = targetHit.point.y - enemy.mesh.position.y;
+            let damage = stat.dmg;
+            let isHeadshot = hitHeight > 8.5;
+
+            if (isHeadshot) {
+                damage *= 4;
+                showHeadshot();
+                playSound('headshot');
+            } else {
+                playSound('hit');
             }
-        } else if (target.isRemotePlayer) {
-            // Multiplayer Logic
-             spawnParticles(target.point, 0x880000, 5); // Blood
+
+            enemy.hp -= damage;
+            enemy.flash();
+            spawnParticles(targetHit.point, 0x880000, 5);
+
+            if(enemy.hp <= 0) killEnemy(enemy);
+
+        } else if (hitRemotePlayerId && state.gameMode === 'multi') {
+            // Hit Remote Player
+             spawnParticles(targetHit.point, 0x880000, 5); // Blood
              playSound('hit');
-             network.sendHit(target.remoteId, stat.dmg);
+             network.sendHit(hitRemotePlayerId, stat.dmg);
         } else {
             // Hit Wall
-            createHole(target.point, target.face.normal);
-            spawnParticles(target.point, 0xaaaaaa, 3); // Dust/Sparks
+            createHole(targetHit.point, targetHit.face.normal);
+            spawnParticles(targetHit.point, 0xaaaaaa, 3); // Dust/Sparks
         }
     }
 }
@@ -173,12 +220,68 @@ export function respawnPlayer() {
     document.getElementById('death-screen').style.display = 'none';
     updateHUD();
     state.controls.lock();
+    
+    if(state.gameMode === 'multi') {
+        network.sendRespawn();
+    }
 }
 
 // Expose for UI
 window.respawnPlayer = respawnPlayer;
 
 export function onKeyDown(e) {
+    const chatInput = document.getElementById('chat-input');
+    const isChatVisible = chatInput.style.display === 'block';
+
+    // Chat Logic
+    if (isChatVisible) {
+        // If chat is open, capture inputs
+        if (e.code === 'Enter') {
+            const msg = chatInput.value.trim();
+            if (msg.length > 0 && state.gameMode === 'multi') {
+                network.sendChat(msg);
+            }
+            chatInput.value = '';
+            chatInput.style.display = 'none'; // Hide
+            chatInput.blur();
+            state.controls.lock(); // Re-lock game
+            return;
+        }
+        if (e.code === 'Escape') {
+            chatInput.value = '';
+            chatInput.style.display = 'none'; // Hide
+            chatInput.blur();
+            state.controls.lock();
+            return;
+        }
+        return; // Block other game controls while typing
+    } else {
+        // Chat not open
+        // Allow opening chat in both modes for consistency/testing, though sending only works in Multi
+        if (e.code === 'Enter') {
+            const chatInput = document.getElementById('chat-input');
+            chatInput.style.display = 'block'; // Show FIRST to prevent start screen from appearing on unlock
+            
+            // We need to unlock controls.
+            if(state.controls.isLocked) {
+                state.controls.unlock(); 
+            }
+             
+            setTimeout(() => chatInput.focus(), 10);
+            return;
+        }
+    }
+
+    // Standard Game Controls (only if chat is closed)
+    if(e.code === 'Tab') {
+        e.preventDefault(); // Prevent focus change
+        document.getElementById('scoreboard').style.display = 'block';
+        // Update scoreboard now just in case
+        if(state.gameMode === 'multi') {
+            updateScoreboardUI();
+        }
+    }
+
     if(e.code==='KeyW') state.moveF=true; if(e.code==='KeyS') state.moveB=true;
     if(e.code==='KeyA') state.moveL=true; if(e.code==='KeyD') state.moveR=true;
     if(e.code==='Space'&&state.canJump){state.velocity.y+=200;state.canJump=false;}
@@ -191,6 +294,10 @@ export function onKeyDown(e) {
 }
 
 export function onKeyUp(e) {
+    if(e.code === 'Tab') {
+        document.getElementById('scoreboard').style.display = 'none';
+    }
+
     if(e.code==='KeyW') state.moveF=false; if(e.code==='KeyS') state.moveB=false;
     if(e.code==='KeyA') state.moveL=false; if(e.code==='KeyD') state.moveR=false;
     if(e.code==='ControlLeft') state.crouch=false;
