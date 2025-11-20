@@ -4,7 +4,7 @@ services:
     env: node
     plan: free
     buildCommand: cd server && npm install
-    startCommand: node server.js
+    startCommand: cd server && npm start
     envVars:
       - key: PORT
         value: 10000
