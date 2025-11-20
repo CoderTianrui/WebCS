@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: cs16-server
+    env: node
+    plan: free
+    # Tell Render to look inside the 'server' directory
+    root: server
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 10000
