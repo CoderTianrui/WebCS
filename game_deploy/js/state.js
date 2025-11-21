@@ -16,6 +16,7 @@ export const state = {
     remotePlayers: {}, // { socketId: RemotePlayerObject }
     chatMessageIds: new Set(),
     chatMessageQueue: [],
+    weaponDrops: [],
     playerName: 'Player',
 
     // Input

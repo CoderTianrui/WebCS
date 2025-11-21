@@ -109,7 +109,8 @@ io.on('connection', (socket) => {
         // Handle Chat
         socket.on('chat_message', (payload) => {
             updateActivity();
-            const text = typeof payload === 'string' ? payload : (payload?.msg ?? '');
+            const raw = typeof payload === 'string' ? payload : (payload?.msg ?? '');
+            const text = typeof raw === 'string' ? raw.trim() : '';
             if (!text || !rooms[room]?.players[socket.id]) return;
             const clientMid = typeof payload === 'object' && payload?.mid ? String(payload.mid) : null;
             const clientTs = typeof payload === 'object' && payload?.ts ? Number(payload.ts) : Date.now();

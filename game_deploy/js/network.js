@@ -5,6 +5,69 @@ import { updateHUD } from './ui.js';
 
 const MAX_CHAT_HISTORY = 200;
 
+const chatRenderQueue = [];
+let chatRenderScheduled = false;
+
+function scheduleFrame(fn) {
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+        window.requestAnimationFrame(fn);
+    } else {
+        setTimeout(fn, 16);
+    }
+}
+
+function ensureChatBuffers() {
+    if (!state.chatMessageIds) {
+        state.chatMessageIds = new Set();
+    }
+    if (!state.chatMessageQueue) {
+        state.chatMessageQueue = [];
+    }
+}
+
+function scheduleChatRender() {
+    if (chatRenderScheduled) return;
+    chatRenderScheduled = true;
+    scheduleFrame(() => {
+        chatRenderScheduled = false;
+        if (!chatRenderQueue.length) return;
+        const chatBox = document.getElementById('chat-history');
+        if (!chatBox) {
+            chatRenderQueue.length = 0;
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        while (chatRenderQueue.length) {
+            const item = chatRenderQueue.shift();
+            const line = document.createElement('div');
+            line.innerHTML = `<span style="color:#aaa">&lt;${item.displayName}&gt;</span> ${item.msg}`;
+            fragment.appendChild(line);
+        }
+        chatBox.appendChild(fragment);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    });
+}
+
+export function appendChatMessage(data) {
+    if (!data || !data.msg) return false;
+    ensureChatBuffers();
+
+    const dedupId = data.mid || `${data.id || 'unknown'}-${data.msg}-${data.ts || ''}`;
+    if (state.chatMessageIds.has(dedupId)) return false;
+
+    state.chatMessageIds.add(dedupId);
+    state.chatMessageQueue.push(dedupId);
+    if (state.chatMessageQueue.length > MAX_CHAT_HISTORY) {
+        const oldest = state.chatMessageQueue.shift();
+        if (oldest) state.chatMessageIds.delete(oldest);
+    }
+
+    const displayName = data.self ? `${data.name || 'You'} (You)` : (data.name || 'Player');
+    chatRenderQueue.push({ displayName, msg: data.msg });
+    scheduleChatRender();
+    return true;
+}
+
 function ensureChatBuffers() {
     if (!state.chatMessageIds) {
         state.chatMessageIds = new Set();

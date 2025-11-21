@@ -4,7 +4,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { state } from './state.js';
 import { buildMap } from './map.js';
 import { createWeaponModel, switchWeapon, fireWeapon, onKeyDown, onKeyUp } from './player.js';
-import { spawnEnemy, killEnemy, clearEnemies } from './entities.js';
+import { spawnEnemy, killEnemy, clearEnemies, updateWeaponDrops } from './entities.js';
 import { updateHUD } from './ui.js';
 import { playSound, toggleMusic } from './audio.js';
 import { createTracer } from './utils.js';
@@ -56,25 +56,32 @@ function animate() {
             if (state.moveL || state.moveR) state.velocity.x -= state.direction.x * speed * delta;
 
             // --- WALL COLLISION FIX ---
-            // 1. Apply Vertical
-            state.controls.getObject().position.y += (state.velocity.y * delta);
+            const playerObj = state.controls.getObject();
 
-            // Ground Check
+            // 1. Apply Vertical + precise ground snap
+            playerObj.position.y += (state.velocity.y * delta);
+
             const pHeight = state.crouch ? 6 : 10;
-            if (state.controls.getObject().position.y < pHeight) {
+            const downRay = new THREE.Raycaster(playerObj.position.clone(), new THREE.Vector3(0, -1, 0), 0, pHeight + 20);
+            const groundHits = downRay.intersectObjects(state.objects, true);
+            let grounded = false;
+            if (groundHits.length > 0) {
+                const targetY = groundHits[0].point.y + pHeight;
+                if (playerObj.position.y <= targetY + 0.05 && state.velocity.y <= 0) {
+                    playerObj.position.y = targetY;
+                    state.velocity.y = 0;
+                    state.canJump = true;
+                    grounded = true;
+                }
+            }
+            if (!grounded && playerObj.position.y < pHeight) {
+                playerObj.position.y = pHeight;
                 state.velocity.y = 0;
-                state.controls.getObject().position.y = pHeight;
                 state.canJump = true;
             }
 
-            // Box Jump Collision (Roof/Floor)
-            const rayDown = new THREE.Raycaster(state.controls.getObject().position, new THREE.Vector3(0, -1, 0), 0, pHeight);
-            if (rayDown.intersectObjects(state.objects).length > 0 && state.velocity.y <= 0) {
-                state.velocity.y = 0; state.canJump = true;
-            }
-
             // 2. Apply Horizontal with Collision Check
-            const oldPos = state.controls.getObject().position.clone();
+            const oldPos = playerObj.position.clone();
 
             state.controls.moveRight(-state.velocity.x * delta);
             state.controls.moveForward(-state.velocity.z * delta);
@@ -82,7 +89,7 @@ function animate() {
             // Check if new position is inside a wall
             // Bumping logic:
             const bumpRay = new THREE.Raycaster();
-            const center = state.controls.getObject().position.clone();
+            const center = playerObj.position.clone();
             center.y -= pHeight / 2;
 
             // Check 4 directions
@@ -97,8 +104,8 @@ function animate() {
             }
 
             if (hitWall) {
-                state.controls.getObject().position.x = oldPos.x;
-                state.controls.getObject().position.z = oldPos.z;
+                playerObj.position.x = oldPos.x;
+                playerObj.position.z = oldPos.z;
                 state.velocity.x = 0;
                 state.velocity.z = 0;
             }
@@ -125,6 +132,9 @@ function animate() {
 
     // Update Remote Players
     Object.values(state.remotePlayers).forEach(p => p.update(delta));
+
+    // Weapon drop animation/pickup
+    updateWeaponDrops(delta);
 
     // NPC Logic (Only in Single Player)
     if (state.gameMode === 'single') {
@@ -195,10 +205,17 @@ function animate() {
 export function startSinglePlayer() {
     state.gameMode = 'single';
     clearEnemies();
+    if (state.weaponDrops.length) {
+        state.weaponDrops.forEach(drop => {
+            if (drop.mesh?.parent) state.scene.remove(drop.mesh);
+        });
+        state.weaponDrops = [];
+    }
     // Spawn NPCs
-    spawnEnemy(0, 0, -150);
-    spawnEnemy(-30, 0, -150);
-    spawnEnemy(30, 0, -150);
+    spawnEnemy(0, 0, -200);
+    spawnEnemy(-150, 0, -120);
+    spawnEnemy(150, 0, -120);
+    spawnEnemy(0, 0, 80);
 
     document.getElementById('login-modal').style.display = 'none';
     document.getElementById('start-screen').style.display = 'flex';
