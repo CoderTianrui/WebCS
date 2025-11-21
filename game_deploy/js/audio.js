@@ -28,6 +28,13 @@ export function playSound(id) {
         g.gain.exponentialRampToValueAtTime(0.01, t + 0.1); 
         o.start(); o.stop(t + 0.1); 
     }
+    else if (id === 'gatling') {
+        o.type = 'square';
+        o.frequency.setValueAtTime(250, t);
+        g.gain.setValueAtTime(0.2, t);
+        g.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
+        o.start(); o.stop(t + 0.05);
+    }
     else if (id === 'enemy_fire') { 
         o.type = 'square'; o.frequency.setValueAtTime(150, t); 
         g.gain.setValueAtTime(0.1, t); g.gain.exponentialRampToValueAtTime(0.01, t + 0.1); 
@@ -61,6 +68,13 @@ export function playSound(id) {
         g.gain.setValueAtTime(0.2, t);
         g.gain.linearRampToValueAtTime(0.001, t + 0.08);
         o.start(); o.stop(t + 0.08);
+    }
+    else if (id === 'snow') {
+        o.type = 'sine';
+        o.frequency.setValueAtTime(900, t);
+        g.gain.setValueAtTime(0.15, t);
+        g.gain.linearRampToValueAtTime(0.001, t + 0.12);
+        o.start(); o.stop(t + 0.12);
     }
     else if (id === 'headshot') { 
         // CRUNCH sound

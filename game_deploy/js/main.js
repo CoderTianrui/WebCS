@@ -3,14 +3,17 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 
 import { state } from './state.js';
 import { buildMap } from './map.js';
-import { createWeaponModel, switchWeapon, fireWeapon, onKeyDown, onKeyUp } from './player.js';
+import { createWeaponModel, switchWeapon, onKeyDown, onKeyUp, handleMouseDown, handleMouseUp, processHeldFire } from './player.js';
 import { spawnEnemy, killEnemy, clearEnemies, updateWeaponDrops } from './entities.js';
 import { updateHUD } from './ui.js';
 import { playSound, toggleMusic } from './audio.js';
 import { createTracer } from './utils.js';
 import { network } from './network.js';
-import { initLoginUI, setModeHints, updateBombIndicator } from './ui.js';
+import { initLoginUI } from './ui.js';
+const setModeHints = window.setModeHints;
+const updateBombIndicator = window.updateBombIndicator;
 import rendererInstance from './renderer.js';
+import { updateProjectiles } from './projectiles.js';
 
 const BOMB_TIMER_SECONDS = 40;
 const tempBox = new THREE.Box3();
@@ -58,12 +61,23 @@ function updateBombTimers() {
 function resolvePlayerCollisions(position) {
     if (!state.objects || !position) return;
     const radius = 5;
+    const playerHeight = state.crouch ? 6 : 10;
+    const stepAllowance = 6;
     state.objects.forEach(obj => {
         if (!obj.geometry || !obj.geometry.boundingBox || !obj.isWall) return;
         tempBox.copy(obj.geometry.boundingBox).applyMatrix4(obj.matrixWorld);
         if (position.y < tempBox.min.y - 10 || position.y > tempBox.max.y + 20) return;
         if (position.x < tempBox.min.x - radius || position.x > tempBox.max.x + radius) return;
         if (position.z < tempBox.min.z - radius || position.z > tempBox.max.z + radius) return;
+
+        const feetY = position.y - playerHeight;
+        if (feetY > tempBox.max.y - stepAllowance && feetY < tempBox.max.y + stepAllowance && state.velocity.y <= 0) {
+            position.y = tempBox.max.y + playerHeight;
+            state.velocity.y = 0;
+            state.canJump = true;
+            return;
+        }
+
         const dx = Math.min(position.x - (tempBox.min.x - radius), (tempBox.max.x + radius) - position.x);
         const dz = Math.min(position.z - (tempBox.min.z - radius), (tempBox.max.z + radius) - position.z);
         if (dx > 0 && dz > 0) {
@@ -98,6 +112,7 @@ function checkPlayerCollisions(currPos) {
 function playerDie() {
     state.player.hp = 0;
     state.player.isDead = true;
+    state.triggerHeld = false;
     updateHUD();
     state.controls.unlock();
     document.getElementById('death-screen').style.display = 'block';
@@ -169,23 +184,29 @@ function animate() {
 
             // Check 4 directions
             const cardinals = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)];
-            let hitWall = false;
+            let blockedX = false;
+            let blockedZ = false;
             for (let dir of cardinals) {
                 bumpRay.set(center, dir);
                 const hits = bumpRay.intersectObjects(state.objects);
                 if (hits.length > 0 && hits[0].distance < 2.5) {
-                    hitWall = true; break;
+                    if (dir.x !== 0) blockedX = true;
+                    if (dir.z !== 0) blockedZ = true;
                 }
             }
 
-            if (hitWall) {
+            const attemptedPos = playerObj.position.clone();
+            if (blockedX) {
                 playerObj.position.x = oldPos.x;
-                playerObj.position.z = oldPos.z;
                 state.velocity.x = 0;
+            }
+            if (blockedZ) {
+                playerObj.position.z = oldPos.z;
                 state.velocity.z = 0;
             }
 
             resolvePlayerCollisions(playerObj.position);
+            processHeldFire();
 
             // Send Network Update if Multiplayer
             if (state.gameMode === 'multi' || state.gameMode === 'multi_ct') {
@@ -212,6 +233,17 @@ function animate() {
 
     // Weapon drop animation/pickup
     updateWeaponDrops(delta);
+    updateProjectiles(delta, {
+        onRemotePlayerHit: (targetId, impulse) => {
+            network.sendSnowballImpulse(targetId, impulse);
+        },
+        onLocalPlayerHit: (_projectile, impulse) => {
+            state.velocity.x += impulse.x;
+            state.velocity.y += impulse.y;
+            state.velocity.z += impulse.z;
+            playSound('hit');
+        }
+    });
     updateBombTimers();
 
     // NPC Logic (Only in Single Player / AI CT)
@@ -359,6 +391,7 @@ function init() {
     });
 
     state.controls.addEventListener('unlock', () => {
+        state.triggerHeld = false;
         const chatVisible = document.getElementById('chat-input').style.display === 'block';
         if (!state.player.isDead &&
             document.getElementById('shop-menu').style.display !== 'block' &&
@@ -372,7 +405,9 @@ function init() {
     // Inputs
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
-    document.addEventListener('mousedown', () => { if (state.controls.isLocked && !state.player.isDead) fireWeapon(); });
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('pointerup', handleMouseUp);
 
     // Map
     buildMap();

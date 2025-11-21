@@ -268,7 +268,15 @@ function initMobileControls() {
     });
 
     createBtn('mc-jump', 'JUMP', (down) => { if(down && state.canJump) { state.velocity.y += 200; state.canJump = false; } });
-    createBtn('mc-fire', 'FIRE', (down) => { if(down && !state.player.isDead) fireWeapon(); });
+    createBtn('mc-fire', 'FIRE', (down) => {
+        if (state.player.isDead) return;
+        if (down) {
+            state.triggerHeld = true;
+            fireWeapon();
+        } else {
+            state.triggerHeld = false;
+        }
+    });
     createBtn('mc-reload', 'R', (down) => { if(down) reload(); });
     
     // Chat Toggle
@@ -344,14 +352,17 @@ export function buy(item) {
     state.player.money -= price;
     const type = weapon.type;
 
-    if (weapon.clip) {
+    if (weapon.singleUse) {
+        const amount = weapon.clip || 1;
+        state.player.ammo[item] = (state.player.ammo[item] || 0) + amount;
+    } else if (weapon.clip) {
         state.player.ammo[item] = weapon.clip;
     }
-    if (weapon.mag) {
+    if (weapon.mag !== undefined) {
         state.player.mags[item] = weapon.mag;
     }
 
-    if (type === 'rifle' || type === 'sniper') {
+    if (type === 'rifle' || type === 'sniper' || type === 'heavy') {
         state.player.slots[0] = item; // Primary
         switchWeapon(0);
     } else if (type === 'pistol') {
@@ -360,6 +371,9 @@ export function buy(item) {
     } else if (type === 'melee') {
         state.player.slots[2] = item;
         switchWeapon(2);
+    } else if (type === 'utility') {
+        state.player.slots[3] = item;
+        switchWeapon(3);
     }
 
     toggleShop();

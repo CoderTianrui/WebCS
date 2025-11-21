@@ -296,6 +296,29 @@ io.on('connection', (socket) => {
             }
         });
 
+        socket.on('projectile_launch', (data) => {
+            updateActivity();
+            if (!data || !data.weaponName) return;
+            socket.to(roomId).emit('projectile_spawn', {
+                weaponName: data.weaponName,
+                ownerId: socket.id,
+                position: data.position,
+                direction: data.direction,
+                speed: data.speed
+            });
+        });
+
+        socket.on('snowball_impulse', (payload) => {
+            updateActivity();
+            if (!payload || !payload.targetId || !payload.impulse) return;
+            const roomInfo = rooms[roomId];
+            if (!roomInfo || !roomInfo.players[payload.targetId]) return;
+            io.to(payload.targetId).emit('snowball_hit', {
+                impulse: payload.impulse,
+                sourceId: socket.id
+            });
+        });
+
         socket.on('plant_bomb', ({ site }) => {
             updateActivity();
             const roomInfo = rooms[roomId];

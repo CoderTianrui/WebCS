@@ -9,5 +9,27 @@ export const WEAPONS = {
     m4a1: { name: "M4A1", type: 'rifle', dmg: 30, rate: 100, clip: 30, mag: 90, spread: 0.02, price: 3100, sound: 'rifle' },
     ak47: { name: "AK47", type: 'rifle', dmg: 35, rate: 110, clip: 30, mag: 90, spread: 0.03, price: 2700, sound: 'rifle' },
     mp5: { name: "MP5", type: 'rifle', dmg: 27, rate: 90, clip: 30, mag: 120, spread: 0.025, price: 2250, sound: 'rifle' },
-    awp: { name: "AWP", type: 'sniper', dmg: 100, rate: 1500, clip: 10, mag: 30, spread: 0.001, price: 4750, sound: 'rifle' }
+    awp: { name: "AWP", type: 'sniper', dmg: 100, rate: 1500, clip: 10, mag: 30, spread: 0.001, price: 4750, sound: 'rifle' },
+    gatling: { name: "加特林", type: 'heavy', dmg: 18, rate: 60, clip: 120, mag: 360, spread: 0.035, price: 5200, sound: 'gatling', auto: true },
+    snowball: {
+        name: "SNOW BALL",
+        type: 'utility',
+        dmg: 5,
+        rate: 400,
+        clip: 1,
+        mag: 0,
+        price: 300,
+        sound: 'snow',
+        singleUse: true,
+        projectile: {
+            speed: 420,
+            gravity: -9.8 * 25,
+            knockback: 240,
+            damage: 5,
+            wakeColor: 0xdaf0ff,
+            color: 0xffffff,
+            radius: 4,
+            life: 4
+        }
+    }
 };

@@ -9,7 +9,9 @@ const DROP_COLORS = {
     rifle: 0x4caf50,
     sniper: 0x9c27b0,
     pistol: 0x2196f3,
-    melee: 0xff9800
+    melee: 0xff9800,
+    heavy: 0xff5722,
+    utility: 0xe0f7fa
 };
 
 export function spawnEnemy(x, y, z) {
@@ -149,8 +151,8 @@ function grantWeaponToPlayer(weaponName) {
     const weapon = WEAPONS[weaponName];
     if (!weapon) return;
 
-    if (weapon.clip) state.player.ammo[weaponName] = weapon.clip;
-    if (weapon.mag) state.player.mags[weaponName] = weapon.mag;
+    if (weapon.clip !== undefined) state.player.ammo[weaponName] = weapon.clip;
+    if (weapon.mag !== undefined) state.player.mags[weaponName] = weapon.mag;
     if (weapon.type === 'rifle' || weapon.type === 'sniper') {
         state.player.slots[0] = weaponName;
     } else if (weapon.type === 'pistol') {

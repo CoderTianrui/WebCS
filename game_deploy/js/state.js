@@ -13,6 +13,7 @@ export const state = {
     socket: null,
     id: null, // My Socket ID
     room: null,
+    activeServerUrl: null,
     remotePlayers: {}, // { socketId: RemotePlayerObject }
     chatMessageIds: new Set(),
     chatMessageQueue: [],
@@ -51,20 +52,23 @@ export const state = {
     objects: [], // Walls
     enemies: [], // NPCs
     particles: [], // Effects
+    projectiles: [],
 
     // Player
     player: {
         hp: 100, money: 800,
         // Slot 0: Primary, Slot 1: Secondary, Slot 2: Melee
-        slots: ['m4a1', 'glock', 'knife'], activeSlot: 1,
-        ammo: { glock: 20, usp: 12, deagle: 7, m4a1: 30, ak47: 30, mp5: 30, awp: 10 },
-        mags: { glock: 120, usp: 60, deagle: 35, m4a1: 90, ak47: 90, mp5: 120, awp: 30 },
+        slots: ['m4a1', 'glock', 'knife', null], activeSlot: 1,
+        ammo: { glock: 20, usp: 12, deagle: 7, m4a1: 30, ak47: 30, mp5: 30, awp: 10, gatling: 0, snowball: 0 },
+        mags: { glock: 120, usp: 60, deagle: 35, m4a1: 90, ak47: 90, mp5: 120, awp: 30, gatling: 0, snowball: 0 },
         lastShot: 0, reloading: false, isDead: false,
         height: 10
     },
 
     // Visuals
     weaponGroup: null,
+    triggerHeld: false,
+    autoFireTimer: null,
 
     // Mobile Flag
     isMobile: false,

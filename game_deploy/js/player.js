@@ -7,6 +7,7 @@ import { createTracer, createHole, spawnParticles, showHeadshot } from './utils.
 import { killEnemy } from './entities.js';
 import { toggleMusic } from './audio.js';
 import { network, updateScoreboardUI, appendChatMessage } from './network.js';
+import { createProjectile } from './projectiles.js';
 
 const isEnterKey = (event) => event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter' || event.keyCode === 13;
 const isEscapeKey = (event) => event.code === 'Escape' || event.key === 'Escape' || event.keyCode === 27;
@@ -16,6 +17,29 @@ const LOCAL_BOMB_TIMER = 40000;
 // Voice Recording
 let mediaRecorder;
 let voiceStream;
+
+const muzzlePosition = new THREE.Vector3();
+const muzzleDirection = new THREE.Vector3();
+
+function launchProjectileWeapon(name, stat) {
+    if (!state.camera) return;
+    state.camera.getWorldPosition(muzzlePosition);
+    muzzleDirection.set(0, 0, -1).applyQuaternion(state.camera.quaternion).normalize();
+    const start = muzzlePosition.clone().add(muzzleDirection.clone().multiplyScalar(6));
+    createProjectile(name, {
+        position: start,
+        direction: muzzleDirection,
+        ownerId: state.id
+    });
+    if (state.gameMode === 'multi' || state.gameMode === 'multi_ct') {
+        network.sendProjectile({
+            weaponName: name,
+            position: { x: start.x, y: start.y, z: start.z },
+            direction: { x: muzzleDirection.x, y: muzzleDirection.y, z: muzzleDirection.z },
+            speed: stat.projectile?.speed || 400
+        });
+    }
+}
 
 async function initVoice() {
     if (voiceStream) return;
@@ -87,11 +111,20 @@ export function switchWeapon(slot) {
     // Rebuild model
     while (state.weaponGroup.children.length) state.weaponGroup.remove(state.weaponGroup.children[0]);
     const w = WEAPONS[name];
+    if (!w) {
+        updateHUD();
+        return;
+    }
 
     const armColor = new THREE.MeshLambertMaterial({ color: 0x3b5c26 });
     const gunColor = new THREE.MeshStandardMaterial({ color: 0x333 });
 
-    if (w.type === 'melee') {
+    if (w.type === 'utility') {
+        const core = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 16), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xbde0ff, emissiveIntensity: 0.4 }));
+        core.position.set(0.4, -0.4, -0.8);
+        state.weaponGroup.add(core);
+        state.weaponGroup.position.set(0.4, -0.35, -0.8);
+    } else if (w.type === 'melee') {
         const h = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.4), new THREE.MeshStandardMaterial({ color: 0x111 }));
         const b = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.7), new THREE.MeshStandardMaterial({ color: 0xccc, metalness: 0.8 }));
         b.position.z = -0.5;
@@ -115,18 +148,25 @@ export function switchWeapon(slot) {
 export function fireWeapon() {
     const now = performance.now();
     const name = state.player.slots[state.player.activeSlot];
+    if (!name) return;
     const stat = WEAPONS[name];
+    if (!stat) return;
 
-    if (state.player.reloading || now - state.player.lastShot < stat.rate) return;
+    if (state.player.reloading || now - state.player.lastShot < (stat.rate || 0)) return;
 
-    if (stat.type !== 'melee' && state.player.ammo[name] <= 0) {
-        playSound('click'); return;
+    const usesAmmo = stat.type !== 'melee';
+    const ammoCount = state.player.ammo[name] ?? 0;
+    if (usesAmmo && ammoCount <= 0) {
+        playSound('click');
+        return;
     }
 
-    if (stat.type !== 'melee') state.player.ammo[name]--;
+    if (usesAmmo) {
+        state.player.ammo[name] = Math.max(0, ammoCount - 1);
+    }
     state.player.lastShot = now;
     updateHUD();
-    playSound(stat.sound);
+    playSound(stat.sound || 'rifle');
 
     // Notify Network if Multiplayer
     if (state.gameMode === 'multi' || state.gameMode === 'multi_ct') {
@@ -136,6 +176,11 @@ export function fireWeapon() {
     // Anim
     state.weaponGroup.position.z += 0.2;
     state.weaponGroup.rotation.x += 0.1;
+
+    if (stat.projectile) {
+        launchProjectileWeapon(name, stat);
+        return;
+    }
 
     // Hit Scan
     const ray = new THREE.Raycaster();
@@ -266,15 +311,16 @@ export function fireWeapon() {
 
 export function reload() {
     const name = state.player.slots[state.player.activeSlot];
-    if (!name || WEAPONS[name].type === 'melee' || state.player.reloading) return;
-    if (state.player.ammo[name] === WEAPONS[name].clip) return;
+    const weapon = WEAPONS[name];
+    if (!name || !weapon || weapon.type === 'melee' || weapon.type === 'utility' || weapon.singleUse || state.player.reloading) return;
+    if (state.player.ammo[name] === weapon.clip) return;
 
     state.player.reloading = true;
     playSound('reload');
     state.weaponGroup.position.y -= 0.5; // Dip
 
     setTimeout(() => {
-        const need = WEAPONS[name].clip - state.player.ammo[name];
+        const need = weapon.clip - state.player.ammo[name];
         const take = Math.min(need, state.player.mags[name]);
         state.player.ammo[name] += take;
         state.player.mags[name] -= take;
@@ -288,10 +334,11 @@ export function reload() {
 export function respawnPlayer() {
     state.player.hp = 100;
     state.player.isDead = false;
-    state.player.ammo = { glock: 20, usp: 12, deagle: 7, m4a1: 30, ak47: 30, mp5: 30, awp: 10 };
-    state.player.mags = { glock: 120, usp: 60, deagle: 35, m4a1: 90, ak47: 90, mp5: 120, awp: 30 };
-    state.player.slots = ['m4a1', 'glock', 'knife'];
+    state.player.ammo = { glock: 20, usp: 12, deagle: 7, m4a1: 30, ak47: 30, mp5: 30, awp: 10, gatling: 0, snowball: 0 };
+    state.player.mags = { glock: 120, usp: 60, deagle: 35, m4a1: 90, ak47: 90, mp5: 120, awp: 30, gatling: 0, snowball: 0 };
+    state.player.slots = ['m4a1', 'glock', 'knife', null];
     state.player.activeSlot = 1;
+    state.triggerHeld = false;
 
     state.camera.position.set(0, 10, 100);
     state.camera.rotation.set(0, Math.PI, 0);
@@ -404,6 +451,7 @@ export function onKeyDown(e) {
     if (e.code === 'Digit1') switchWeapon(0); // Primary
     if (e.code === 'Digit2') switchWeapon(1); // Pistol
     if (e.code === 'Digit3') switchWeapon(2); // Knife
+    if (e.code === 'Digit4') switchWeapon(3); // Utility
     if (e.code === 'ControlLeft') state.crouch = true;
     if (e.code === 'KeyM') toggleMusic();
     if (e.code === 'KeyT') startRecording();
@@ -471,4 +519,25 @@ export function onKeyUp(e) {
     if (e.code === 'KeyA') state.moveL = false; if (e.code === 'KeyD') state.moveR = false;
     if (e.code === 'ControlLeft') state.crouch = false;
     if (e.code === 'KeyT') stopRecording();
+}
+
+export function handleMouseDown() {
+    if (!state.controls?.isLocked || state.player.isDead) return;
+    state.triggerHeld = true;
+    fireWeapon();
+}
+
+export function handleMouseUp() {
+    state.triggerHeld = false;
+}
+
+export function processHeldFire() {
+    if (!state.triggerHeld || state.player.isDead) return;
+    if (!state.controls?.isLocked) return;
+    const name = state.player.slots[state.player.activeSlot];
+    if (!name) return;
+    const stat = WEAPONS[name];
+    if (stat?.auto) {
+        fireWeapon();
+    }
 }

@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { RemotePlayer } from './remote_player.js';
 import { playSound } from './audio.js';
+import { spawnProjectileFromNetwork } from './projectiles.js';
 import { updateHUD } from './ui.js';
 
 const MAX_CHAT_HISTORY = 200;
@@ -74,20 +75,28 @@ function ensureChatBuffers() {
 // CHANGE THIS TO YOUR RENDER URL ONCE DEPLOYED
 const PRODUCTION_SERVER_URL = "https://webcs-6js9.onrender.com";
 
+function buildServerCandidates(options = {}) {
+    const list = [];
+    if (options.serverUrl) list.push(options.serverUrl);
+    if (typeof window !== 'undefined') {
+        if (window.__GAME_SERVER_URL__) list.push(window.__GAME_SERVER_URL__);
+        const host = window.location.hostname;
+        if (host === 'localhost' || host === '127.0.0.1') {
+            list.push('http://localhost:3000');
+        }
+        if (window.location.protocol === 'file:') {
+            list.push('http://localhost:3000');
+        }
+    }
+    list.push(PRODUCTION_SERVER_URL);
+    if (typeof window !== 'undefined' && window.location?.origin && window.location.origin.startsWith('http')) {
+        list.push(window.location.origin);
+    }
+    return [...new Set(list.filter(Boolean))];
+}
+
 export const network = {
     connect: (name, room, options = {}) => {
-        // Determine URL
-        let serverUrl;
-
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            serverUrl = 'http://localhost:3000';
-        } else {
-            // Use production URL
-            serverUrl = PRODUCTION_SERVER_URL;
-        }
-
-        if (!serverUrl) return;
-
         // Prevent multiple connections or duplicate listeners
         if (state.socket) {
             state.socket.removeAllListeners();
@@ -97,10 +106,14 @@ export const network = {
         const playerLabel = name?.trim() || state.playerName || 'Player';
         state.playerName = playerLabel;
 
-        state.socket = io(serverUrl);
+        const candidates = buildServerCandidates(options);
+        if (!candidates.length) {
+            alert("No server candidates available for multiplayer.");
+            return;
+        }
 
-        state.socket.on('connect', () => {
-            console.log('Connected to server');
+        const finalizeConnection = (playerLabel, room, options) => {
+            if (!state.socket) return;
             state.id = state.socket.id;
             state.room = room;
             const mode = options.mode || (state.currentMode === 'multi_ct' ? 'ctt' : 'ffa');
@@ -110,18 +123,44 @@ export const network = {
                 mode,
                 teamPreference: options.teamPreference || null
             });
-
-            // Hide Login, Show Game
+            network.initListeners();
             document.getElementById('login-modal').style.display = 'none';
             document.getElementById('start-screen').style.display = 'flex';
-        });
+        };
 
-        state.socket.on('connect_error', (err) => {
-            alert("Failed to connect to server. Multiplayer unavailable.");
-            console.error(err);
-        });
+        const tryConnect = (index) => {
+            if (index >= candidates.length) {
+                alert("Failed to connect to multiplayer server. Please check that the server is running.");
+                console.error('All connection attempts failed:', candidates);
+                return;
+            }
 
-        network.initListeners();
+            const serverUrl = candidates[index];
+            console.info(`Attempting to connect to ${serverUrl}...`);
+            const socket = io(serverUrl);
+            let resolved = false;
+
+            const handleError = (err) => {
+                if (resolved) return;
+                console.warn(`Connection to ${serverUrl} failed:`, err?.message || err);
+                socket.removeAllListeners();
+                socket.disconnect();
+                tryConnect(index + 1);
+            };
+
+            socket.on('connect_error', handleError);
+
+            socket.on('connect', () => {
+                resolved = true;
+                socket.off('connect_error', handleError);
+                console.info(`Connected to ${serverUrl}`);
+                state.socket = socket;
+                state.activeServerUrl = serverUrl;
+                finalizeConnection(playerLabel, room, options);
+            });
+        };
+
+        tryConnect(0);
     },
 
     initListeners: () => {
@@ -280,6 +319,24 @@ export const network = {
             }
         });
 
+        s.on('projectile_spawn', (data) => {
+            spawnProjectileFromNetwork(data);
+        });
+
+        s.on('snowball_hit', (data) => {
+            if (!data || !data.impulse) return;
+            const impulse = data.impulse;
+            state.velocity.x += impulse.x || 0;
+            state.velocity.y += impulse.y || 0;
+            state.velocity.z += impulse.z || 0;
+            playSound('hit');
+            const flash = document.getElementById('damage-flash');
+            if (flash) {
+                flash.style.opacity = 1;
+                setTimeout(() => flash.style.opacity = 0, 120);
+            }
+        });
+
         // Voice Listeners
         s.on('voice_start', (id) => {
             if (state.remotePlayers[id]) {
@@ -345,6 +402,16 @@ export const network = {
     sendDefuseBomb: () => {
         if (!state.socket) return;
         state.socket.emit('defuse_bomb');
+    },
+
+    sendProjectile: (payload) => {
+        if (!state.socket || !payload) return;
+        state.socket.emit('projectile_launch', payload);
+    },
+
+    sendSnowballImpulse: (targetId, impulse) => {
+        if (!state.socket || !targetId || !impulse) return;
+        state.socket.emit('snowball_impulse', { targetId, impulse });
     },
 
     // Voice
