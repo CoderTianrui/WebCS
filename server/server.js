@@ -35,11 +35,11 @@ io.on('connection', (socket) => {
 
         // Join room
         socket.join(room);
-        
+
         // Initial state
         rooms[room].players[socket.id] = {
             id: socket.id,
-            name: name || `Player ${socket.id.substr(0,4)}`,
+            name: name || `Player ${socket.id.substr(0, 4)}`,
             x: DEFAULT_SPAWN.x,
             y: DEFAULT_SPAWN.y,
             z: DEFAULT_SPAWN.z,
@@ -54,7 +54,7 @@ io.on('connection', (socket) => {
 
         socket.emit('joined', { id: socket.id, players: rooms[room].players });
         socket.to(room).emit('player_joined', rooms[room].players[socket.id]);
-        
+
         console.log(`${name} joined room ${room}`);
 
         // Handle Disconnect
@@ -67,10 +67,10 @@ io.on('connection', (socket) => {
                 }
             }
         });
-        
+
         // Track activity
         const updateActivity = () => {
-            if(rooms[room] && rooms[room].players[socket.id]) {
+            if (rooms[room] && rooms[room].players[socket.id]) {
                 rooms[room].players[socket.id].lastAction = Date.now();
             }
         };
@@ -80,15 +80,15 @@ io.on('connection', (socket) => {
             if (rooms[room] && rooms[room].players[socket.id]) {
                 const p = rooms[room].players[socket.id];
                 // Check if position changed significantly to count as activity
-                if(Math.abs(p.x - data.x) > 0.1 || Math.abs(p.z - data.z) > 0.1 || Math.abs(p.ry - data.ry) > 0.1) {
-                     p.lastAction = Date.now();
+                if (Math.abs(p.x - data.x) > 0.1 || Math.abs(p.z - data.z) > 0.1 || Math.abs(p.ry - data.ry) > 0.1) {
+                    p.lastAction = Date.now();
                 }
-                
+
                 p.x = data.x; p.y = data.y; p.z = data.z;
                 p.rx = data.rx; p.ry = data.ry;
                 // Broadcast to others (volatile for performance)
-                socket.to(room).volatile.emit('player_update', { 
-                    id: socket.id, 
+                socket.to(room).volatile.emit('player_update', {
+                    id: socket.id,
                     ...data,
                     hp: p.hp,
                     isDead: p.isDead
@@ -129,7 +129,7 @@ io.on('connection', (socket) => {
             updateActivity();
             socket.to(room).emit('remote_shoot', { id: socket.id, ...data });
         });
-        
+
         socket.on('hit', (data) => {
             // data: { targetId, damage }
             if (rooms[room] && rooms[room].players[data.targetId]) {
@@ -137,25 +137,39 @@ io.on('connection', (socket) => {
                 const attackerId = socket.id; // Use local var to be safe
                 target.hp -= data.damage;
                 io.to(room).emit('player_damaged', { id: data.targetId, hp: target.hp, attackerId: attackerId });
-                
+
                 if (target.hp <= 0) {
                     // Reset HP for respawn logic if needed, or let client handle
                     target.hp = 0; // Keep at 0 to mark as dead
                     target.isDead = true;
                     target.deaths++;
-                    if(rooms[room].players[attackerId]) rooms[room].players[attackerId].kills++;
-                    
-                    io.to(room).emit('player_died', { 
-                        id: data.targetId, 
+                    if (rooms[room].players[attackerId]) rooms[room].players[attackerId].kills++;
+
+                    io.to(room).emit('player_died', {
+                        id: data.targetId,
                         attackerId: attackerId,
                         kills: rooms[room].players[attackerId]?.kills || 0,
                         deaths: target.deaths
                     });
-                    
+
                     // Broadcast updated scoreboard data
                     io.to(room).emit('scoreboard_update', rooms[room].players);
                 }
             }
+        });
+
+        // Voice Chat
+        socket.on('voice_start', () => {
+            socket.to(room).emit('voice_start', socket.id);
+        });
+
+        socket.on('voice_end', () => {
+            socket.to(room).emit('voice_end', socket.id);
+        });
+
+        socket.on('voice_data', (data) => {
+            // data is the audio chunk (ArrayBuffer or Blob)
+            socket.to(room).emit('voice_data', { id: socket.id, data: data });
         });
     });
 });
@@ -168,16 +182,16 @@ setInterval(() => {
         Object.keys(room.players).forEach(socketId => {
             const p = room.players[socketId];
             const idleTime = now - p.lastAction;
-            
+
             // Warning at 20s (10s before kick)
             if (idleTime > 20000 && idleTime < 21000) {
-                io.to(socketId).emit('chat_message', { 
-                    id: 'server', 
-                    name: 'SERVER', 
-                    msg: '<span style="color:red">Warning: You will be kicked in 10s for inactivity!</span>' 
+                io.to(socketId).emit('chat_message', {
+                    id: 'server',
+                    name: 'SERVER',
+                    msg: '<span style="color:red">Warning: You will be kicked in 10s for inactivity!</span>'
                 });
             }
-            
+
             // Kick at 30s
             if (idleTime > 30000) {
                 const socket = io.sockets.sockets.get(socketId);

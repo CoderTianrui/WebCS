@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { state } from './state.js';
 import { spawnParticles } from './utils.js';
 import { playSound } from './audio.js';
+import rendererInstance from './renderer.js';
 
 // Simple class to render other players
 export class RemotePlayer {
@@ -18,12 +19,12 @@ export class RemotePlayer {
             z: startData.z ?? 0,
             ry: startData.ry ?? 0
         };
-        
+
         // Body (Split into Torso and Legs for better visual grounding)
-        const bodyMat = new THREE.MeshLambertMaterial({color: 0x0000ff}); 
-        
+        const bodyMat = new THREE.MeshLambertMaterial({ color: 0x0000ff });
+
         // Legs
-        const legs = new THREE.Mesh(new THREE.BoxGeometry(3.5, 5, 2), new THREE.MeshLambertMaterial({color: 0x0000aa}));
+        const legs = new THREE.Mesh(new THREE.BoxGeometry(3.5, 5, 2), new THREE.MeshLambertMaterial({ color: 0x0000aa }));
         legs.position.y = 2.5;
         this.mesh.add(legs);
 
@@ -33,10 +34,10 @@ export class RemotePlayer {
         this.mesh.add(torso);
 
         // Head
-        const head = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshLambertMaterial({color:0xd2b48c}));
+        const head = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshLambertMaterial({ color: 0xd2b48c }));
         head.position.y = 11;
         this.mesh.add(head);
-        
+
         // Name Tag
         this.nameTag = this.createNameTag(name);
         this.nameTag.position.y = 14;
@@ -45,16 +46,16 @@ export class RemotePlayer {
         // Position
         // FIX: StartData.y is camera height (10), so feet should be at y-10.
         this.mesh.position.set(this.lastServerState.x, this.lastServerState.y - 10, this.lastServerState.z);
-        
+
         state.scene.add(this.mesh);
-        
+
         // Handle initial dead state
         if (startData.isDead || (startData.hp !== undefined && startData.hp <= 0)) {
             this.isDead = true;
             state.scene.remove(this.mesh);
             this.mesh.visible = false;
         }
-        
+
         // Interpolation buffer
         this.targetPos = this.mesh.position.clone();
         this.targetRot = this.lastServerState.ry;
@@ -65,13 +66,13 @@ export class RemotePlayer {
         const ctx = canvas.getContext('2d');
         canvas.width = 256; canvas.height = 64;
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(0,0,256,64);
+        ctx.fillRect(0, 0, 256, 64);
         ctx.fillStyle = 'white';
         ctx.font = 'bold 30px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(text, 128, 32);
-        
+
         const tex = new THREE.CanvasTexture(canvas);
         const mat = new THREE.SpriteMaterial({ map: tex });
         const sprite = new THREE.Sprite(mat);
@@ -79,12 +80,31 @@ export class RemotePlayer {
         return sprite;
     }
 
+    setTalking(isTalking) {
+        if (!this.speakerIcon) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 64; canvas.height = 64;
+            ctx.font = '50px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🔊', 32, 32);
+            const tex = new THREE.CanvasTexture(canvas);
+            const mat = new THREE.SpriteMaterial({ map: tex });
+            this.speakerIcon = new THREE.Sprite(mat);
+            this.speakerIcon.scale.set(4, 4, 1);
+            this.speakerIcon.position.y = 17; // Above name tag
+            this.mesh.add(this.speakerIcon);
+        }
+        this.speakerIcon.visible = isTalking;
+    }
+
     update(delta) {
         if (this.isDead) return;
         // Simple Lerp for smoothness
         this.mesh.position.lerp(this.targetPos, 10 * delta);
         // Rotate body only on Y
-        this.mesh.rotation.y = this.targetRot; 
+        this.mesh.rotation.y = this.targetRot;
     }
 
     setTarget(data) {
@@ -93,13 +113,13 @@ export class RemotePlayer {
         this.targetPos.set(this.lastServerState.x, this.lastServerState.y - 10, this.lastServerState.z);
         this.targetRot = this.lastServerState.ry;
     }
-    
+
     shoot(data) {
         if (this.isDead) return;
         // Visual flash or sound coming from this player
-        playSound('enemy_fire'); 
+        playSound('enemy_fire');
     }
-    
+
     syncFromServer(data) {
         this.setTarget(data);
         const shouldBeDead = data.isDead || (typeof data.hp === 'number' ? data.hp <= 0 : this.hp <= 0);
@@ -111,20 +131,26 @@ export class RemotePlayer {
             this.respawn(data);
         }
     }
-    
+
     die() {
         if (this.isDead) return;
         this.isDead = true;
         const deathPos = this.mesh.position.clone().add(new THREE.Vector3(0, 6, 0));
         spawnParticles(deathPos, 0x880000, 6);
-        if (this.mesh.parent) {
-            state.scene.remove(this.mesh);
-        }
-        this.mesh.visible = false;
+
+        // Rotate to simulate falling
+        this.mesh.rotation.x = -Math.PI / 2;
+        this.mesh.position.y = 2; // Lower to ground
+
+        // Register for cleanup
+        rendererInstance.registerDisposable(this.mesh, 5000);
     }
-    
+
+
     respawn(spawnData) {
         this.isDead = false;
+        rendererInstance.cancelDisposable(this.mesh); // Cancel any pending deletion
+        this.mesh.rotation.x = 0; // Reset rotation from death
         if (spawnData) {
             this.setTarget(spawnData);
             this.mesh.position.copy(this.targetPos);

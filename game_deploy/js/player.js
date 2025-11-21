@@ -4,46 +4,99 @@ import { state } from './state.js';
 import { playSound } from './audio.js';
 import { updateHUD, toggleShop } from './ui.js';
 import { createTracer, createHole, spawnParticles, showHeadshot } from './utils.js';
-import { killEnemy } from './entities.js'; 
+import { killEnemy } from './entities.js';
 import { toggleMusic } from './audio.js';
 import { network, updateScoreboardUI } from './network.js';
 
 const isEnterKey = (event) => event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter' || event.keyCode === 13;
 const isEscapeKey = (event) => event.code === 'Escape' || event.key === 'Escape' || event.keyCode === 27;
 
+// Voice Recording
+let mediaRecorder;
+let voiceStream;
+
+async function initVoice() {
+    if (voiceStream) return;
+    try {
+        voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+        console.error("Microphone access denied", err);
+    }
+}
+
+function startRecording() {
+    if (!voiceStream) {
+        initVoice().then(() => {
+            if (voiceStream) startRecording();
+        });
+        return;
+    }
+    if (mediaRecorder && mediaRecorder.state === 'recording') return;
+
+    mediaRecorder = new MediaRecorder(voiceStream);
+    mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+            network.sendVoiceData(e.data);
+        }
+    };
+    mediaRecorder.start(100); // Send chunks every 100ms
+    network.sendVoiceStart();
+
+    // Show local indicator
+    const hud = document.getElementById('hud');
+    let micIcon = document.getElementById('mic-icon');
+    if (!micIcon) {
+        micIcon = document.createElement('div');
+        micIcon.id = 'mic-icon';
+        micIcon.innerText = '🎤';
+        micIcon.style.cssText = 'position:absolute; bottom:100px; right:20px; font-size:30px; color:lime;';
+        hud.appendChild(micIcon);
+    }
+    micIcon.style.display = 'block';
+}
+
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        network.sendVoiceEnd();
+    }
+    const micIcon = document.getElementById('mic-icon');
+    if (micIcon) micIcon.style.display = 'none';
+}
+
 export function createWeaponModel() {
-    if(state.weaponGroup) state.camera.remove(state.weaponGroup);
+    if (state.weaponGroup) state.camera.remove(state.weaponGroup);
     state.weaponGroup = new THREE.Group();
     state.camera.add(state.weaponGroup);
 }
 
 export function switchWeapon(slot) {
-    if(state.player.reloading || state.player.isDead) return;
+    if (state.player.reloading || state.player.isDead) return;
     const name = state.player.slots[slot];
-    if(!name) return;
-    
-    state.player.activeSlot = slot;
-    
-    // Rebuild model
-    while(state.weaponGroup.children.length) state.weaponGroup.remove(state.weaponGroup.children[0]);
-    const w = WEAPONS[name];
-    
-    const armColor = new THREE.MeshLambertMaterial({color: 0x3b5c26});
-    const gunColor = new THREE.MeshStandardMaterial({color: 0x333});
+    if (!name) return;
 
-    if(w.type === 'melee') {
-        const h = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,0.4), new THREE.MeshStandardMaterial({color:0x111}));
-        const b = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.1,0.7), new THREE.MeshStandardMaterial({color:0xccc, metalness:0.8}));
+    state.player.activeSlot = slot;
+
+    // Rebuild model
+    while (state.weaponGroup.children.length) state.weaponGroup.remove(state.weaponGroup.children[0]);
+    const w = WEAPONS[name];
+
+    const armColor = new THREE.MeshLambertMaterial({ color: 0x3b5c26 });
+    const gunColor = new THREE.MeshStandardMaterial({ color: 0x333 });
+
+    if (w.type === 'melee') {
+        const h = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.4), new THREE.MeshStandardMaterial({ color: 0x111 }));
+        const b = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.7), new THREE.MeshStandardMaterial({ color: 0xccc, metalness: 0.8 }));
         b.position.z = -0.5;
-        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.2,1.5), new THREE.MeshLambertMaterial({color:0xd2b48c})); // Skin
-        arm.position.set(0.2,-0.1,0.5);
-        state.weaponGroup.add(h,b,arm);
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 1.5), new THREE.MeshLambertMaterial({ color: 0xd2b48c })); // Skin
+        arm.position.set(0.2, -0.1, 0.5);
+        state.weaponGroup.add(h, b, arm);
         state.weaponGroup.position.set(0.5, -0.5, -1);
     } else {
-        const len = w.type==='rifle'?2:1;
-        const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.2,len), gunColor);
-        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.25,0.25,2), armColor);
-        arm.position.set(0.3,0,0.5); arm.rotation.y = -0.2;
+        const len = w.type === 'rifle' ? 2 : 1;
+        const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, len), gunColor);
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 2), armColor);
+        arm.position.set(0.3, 0, 0.5); arm.rotation.y = -0.2;
         state.weaponGroup.add(barrel, arm);
         state.weaponGroup.position.set(0.5, -0.5, -1);
     }
@@ -55,23 +108,23 @@ export function fireWeapon() {
     const now = performance.now();
     const name = state.player.slots[state.player.activeSlot];
     const stat = WEAPONS[name];
-    
-    if(state.player.reloading || now - state.player.lastShot < stat.rate) return;
-    
-    if(stat.type !== 'melee' && state.player.ammo[name] <= 0) {
+
+    if (state.player.reloading || now - state.player.lastShot < stat.rate) return;
+
+    if (stat.type !== 'melee' && state.player.ammo[name] <= 0) {
         playSound('click'); return;
     }
 
-    if(stat.type !== 'melee') state.player.ammo[name]--;
+    if (stat.type !== 'melee') state.player.ammo[name]--;
     state.player.lastShot = now;
     updateHUD();
     playSound(stat.sound);
-    
+
     // Notify Network if Multiplayer
-    if(state.gameMode === 'multi') {
+    if (state.gameMode === 'multi') {
         network.sendShoot();
     }
-    
+
     // Anim
     state.weaponGroup.position.z += 0.2;
     state.weaponGroup.rotation.x += 0.1;
@@ -79,8 +132,8 @@ export function fireWeapon() {
     // Hit Scan
     const ray = new THREE.Raycaster();
     const spread = state.crouch ? stat.spread * 0.5 : stat.spread;
-    ray.setFromCamera(new THREE.Vector2((Math.random()-.5)*spread, (Math.random()-.5)*spread), state.camera);
-    
+    ray.setFromCamera(new THREE.Vector2((Math.random() - .5) * spread, (Math.random() - .5) * spread), state.camera);
+
     // Intersect everything
     const hits = ray.intersectObjects(state.scene.children, true);
     let targetHit = null;
@@ -90,9 +143,9 @@ export function fireWeapon() {
     // FIXED HIT DETECTION LOGIC
     for (let h of hits) {
         if (h.distance < 1) continue; // Skip self/close artifacts
-        
+
         let obj = h.object;
-        
+
         // 1. Check for NPC Enemy (using userData we added in entities.js)
         if (obj.userData && obj.userData.parentEnemy) {
             targetHit = h;
@@ -110,7 +163,7 @@ export function fireWeapon() {
         // We need to traverse up to find the group that represents a player
         let remoteId = null;
         let tempObj = obj;
-        while(tempObj) {
+        while (tempObj) {
             // We need a way to identify remote player meshes. 
             // In remote_player.js, we didn't add userData. Let's assume we can find it by reference.
             const foundId = Object.keys(state.remotePlayers).find(id => state.remotePlayers[id].mesh === tempObj);
@@ -139,11 +192,11 @@ export function fireWeapon() {
         let isWall = false;
         // state.objects contains meshes.
         if (state.objects.includes(obj)) isWall = true;
-        
+
         if (isWall || obj.isWall || (obj.parent && obj.parent.type === 'Scene')) {
-             // Hit map geometry
-             targetHit = h;
-             break; // Stop at wall
+            // Hit map geometry
+            targetHit = h;
+            break; // Stop at wall
         }
     }
 
@@ -172,13 +225,13 @@ export function fireWeapon() {
             enemy.flash();
             spawnParticles(targetHit.point, 0x880000, 5);
 
-            if(enemy.hp <= 0) killEnemy(enemy);
+            if (enemy.hp <= 0) killEnemy(enemy);
 
         } else if (hitRemotePlayerId && state.gameMode === 'multi') {
             // Hit Remote Player
-             spawnParticles(targetHit.point, 0x880000, 5); // Blood
-             playSound('hit');
-             network.sendHit(hitRemotePlayerId, stat.dmg);
+            spawnParticles(targetHit.point, 0x880000, 5); // Blood
+            playSound('hit');
+            network.sendHit(hitRemotePlayerId, stat.dmg);
         } else {
             // Hit Wall
             createHole(targetHit.point, targetHit.face.normal);
@@ -189,8 +242,8 @@ export function fireWeapon() {
 
 export function reload() {
     const name = state.player.slots[state.player.activeSlot];
-    if(!name || WEAPONS[name].type === 'melee' || state.player.reloading) return;
-    if(state.player.ammo[name] === WEAPONS[name].clip) return;
+    if (!name || WEAPONS[name].type === 'melee' || state.player.reloading) return;
+    if (state.player.ammo[name] === WEAPONS[name].clip) return;
 
     state.player.reloading = true;
     playSound('reload');
@@ -211,20 +264,20 @@ export function reload() {
 export function respawnPlayer() {
     state.player.hp = 100;
     state.player.isDead = false;
-    state.player.ammo = { glock:20, deagle:7, m4a1:30, awp:10 };
+    state.player.ammo = { glock: 20, deagle: 7, m4a1: 30, awp: 10 };
     state.player.slots = [null, 'glock', 'knife'];
     state.player.activeSlot = 1;
-    
+
     state.camera.position.set(0, 10, 100);
     state.camera.rotation.set(0, Math.PI, 0);
-    state.velocity.set(0,0,0);
+    state.velocity.set(0, 0, 0);
     switchWeapon(1);
-    
+
     document.getElementById('death-screen').style.display = 'none';
     updateHUD();
     state.controls.lock();
-    
-    if(state.gameMode === 'multi') {
+
+    if (state.gameMode === 'multi') {
         network.sendRespawn();
     }
 }
@@ -260,48 +313,54 @@ export function onKeyDown(e) {
         return; // Block other game controls while typing
     } else {
         // Chat not open
-        // Allow opening chat in both modes for consistency/testing, though sending only works in Multi
         if (isEnterKey(e)) {
+            e.preventDefault(); // Prevent default behavior
             const chatInput = document.getElementById('chat-input');
-            chatInput.style.display = 'block'; // Show FIRST to prevent start screen from appearing on unlock
-            
-            // We need to unlock controls.
-            if(state.controls.isLocked) {
-                state.controls.unlock(); 
+
+            // Unlock controls first
+            if (state.controls.isLocked) {
+                state.controls.unlock();
             }
-             
-            setTimeout(() => chatInput.focus(), 10);
+
+            chatInput.style.display = 'block';
+
+            // Force focus with a slight delay to ensure UI is ready
+            setTimeout(() => {
+                chatInput.focus();
+            }, 10);
             return;
         }
     }
 
     // Standard Game Controls (only if chat is closed)
-    if(e.code === 'Tab') {
+    if (e.code === 'Tab') {
         e.preventDefault(); // Prevent focus change
         document.getElementById('scoreboard').style.display = 'block';
         // Update scoreboard now just in case
-        if(state.gameMode === 'multi') {
+        if (state.gameMode === 'multi') {
             updateScoreboardUI();
         }
     }
 
-    if(e.code==='KeyW') state.moveF=true; if(e.code==='KeyS') state.moveB=true;
-    if(e.code==='KeyA') state.moveL=true; if(e.code==='KeyD') state.moveR=true;
-    if(e.code==='Space'&&state.canJump){state.velocity.y+=200;state.canJump=false;}
-    if(e.code==='KeyR') reload(); if(e.code==='KeyB') toggleShop();
-    if(e.code==='Digit1') switchWeapon(0); // Primary
-    if(e.code==='Digit2') switchWeapon(1); // Pistol
-    if(e.code==='Digit3') switchWeapon(2); // Knife
-    if(e.code==='ControlLeft') state.crouch=true;
-    if(e.code==='KeyM') toggleMusic();
+    if (e.code === 'KeyW') state.moveF = true; if (e.code === 'KeyS') state.moveB = true;
+    if (e.code === 'KeyA') state.moveL = true; if (e.code === 'KeyD') state.moveR = true;
+    if (e.code === 'Space' && state.canJump) { state.velocity.y += 200; state.canJump = false; }
+    if (e.code === 'KeyR') reload(); if (e.code === 'KeyB') toggleShop();
+    if (e.code === 'Digit1') switchWeapon(0); // Primary
+    if (e.code === 'Digit2') switchWeapon(1); // Pistol
+    if (e.code === 'Digit3') switchWeapon(2); // Knife
+    if (e.code === 'ControlLeft') state.crouch = true;
+    if (e.code === 'KeyM') toggleMusic();
+    if (e.code === 'KeyT') startRecording();
 }
 
 export function onKeyUp(e) {
-    if(e.code === 'Tab') {
+    if (e.code === 'Tab') {
         document.getElementById('scoreboard').style.display = 'none';
     }
 
-    if(e.code==='KeyW') state.moveF=false; if(e.code==='KeyS') state.moveB=false;
-    if(e.code==='KeyA') state.moveL=false; if(e.code==='KeyD') state.moveR=false;
-    if(e.code==='ControlLeft') state.crouch=false;
+    if (e.code === 'KeyW') state.moveF = false; if (e.code === 'KeyS') state.moveB = false;
+    if (e.code === 'KeyA') state.moveL = false; if (e.code === 'KeyD') state.moveR = false;
+    if (e.code === 'ControlLeft') state.crouch = false;
+    if (e.code === 'KeyT') stopRecording();
 }

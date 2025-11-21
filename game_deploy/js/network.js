@@ -5,38 +5,38 @@ import { updateHUD } from './ui.js';
 
 // --- CONFIGURATION ---
 // CHANGE THIS TO YOUR RENDER URL ONCE DEPLOYED
-const PRODUCTION_SERVER_URL = "https://webcs-6js9.onrender.com"; 
+const PRODUCTION_SERVER_URL = "https://webcs-6js9.onrender.com";
 
 export const network = {
     connect: (name, room) => {
         // Determine URL
         let serverUrl;
-        
+
         if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-             serverUrl = 'http://localhost:3000';
+            serverUrl = 'http://localhost:3000';
         } else {
             // Use production URL
             serverUrl = PRODUCTION_SERVER_URL;
         }
 
-        if(!serverUrl) return;
+        if (!serverUrl) return;
 
         state.socket = io(serverUrl);
-        
+
         state.socket.on('connect', () => {
             console.log('Connected to server');
             state.id = state.socket.id;
             state.room = room;
             state.socket.emit('join', { name, room });
-            
+
             // Hide Login, Show Game
             document.getElementById('login-modal').style.display = 'none';
             document.getElementById('start-screen').style.display = 'flex';
         });
 
         state.socket.on('connect_error', (err) => {
-             alert("Failed to connect to server. Multiplayer unavailable.");
-             console.error(err);
+            alert("Failed to connect to server. Multiplayer unavailable.");
+            console.error(err);
         });
 
         network.initListeners();
@@ -54,7 +54,7 @@ export const network = {
         s.on('joined', (data) => {
             // data.players is list of existing players
             Object.values(data.players).forEach(p => {
-                if(p.id !== state.id) {
+                if (p.id !== state.id) {
                     state.remotePlayers[p.id] = new RemotePlayer(p.id, p.name, p);
                 }
             });
@@ -68,7 +68,7 @@ export const network = {
         });
 
         s.on('player_left', (id) => {
-            if(state.remotePlayers[id]) {
+            if (state.remotePlayers[id]) {
                 state.remotePlayers[id].dispose();
                 delete state.remotePlayers[id];
             }
@@ -76,15 +76,15 @@ export const network = {
 
         s.on('player_update', (data) => {
             const remote = state.remotePlayers[data.id];
-            if(remote) {
+            if (remote) {
                 remote.syncFromServer(data);
             }
         });
-        
+
         s.on('remote_shoot', (data) => {
-             if(state.remotePlayers[data.id]) {
-                 state.remotePlayers[data.id].shoot(data);
-             }
+            if (state.remotePlayers[data.id]) {
+                state.remotePlayers[data.id].shoot(data);
+            }
         });
 
         s.on('player_damaged', (data) => {
@@ -93,71 +93,91 @@ export const network = {
                 state.player.hp = data.hp;
                 updateHUD();
                 document.getElementById('damage-flash').style.opacity = 1;
-                setTimeout(()=>document.getElementById('damage-flash').style.opacity=0, 100);
+                setTimeout(() => document.getElementById('damage-flash').style.opacity = 0, 100);
             }
         });
 
         s.on('player_respawn', (payload) => {
-             const data = typeof payload === 'string' ? { id: payload } : payload;
-             if (!data || data.id === state.id) return;
-             const remote = state.remotePlayers[data.id];
-             if(remote) {
-                 remote.respawn(data);
-             }
+            const data = typeof payload === 'string' ? { id: payload } : payload;
+            if (!data || data.id === state.id) return;
+            const remote = state.remotePlayers[data.id];
+            if (remote) {
+                remote.respawn(data);
+            }
         });
-        
+
         s.on('chat_message', (data) => {
-             // data: { id, name, msg }
-             const chatBox = document.getElementById('chat-history');
-             if(chatBox) {
-                 const line = document.createElement('div');
-                 line.innerHTML = `<span style="color:#aaa">&lt;${data.name}&gt;</span> ${data.msg}`;
-                 chatBox.appendChild(line);
-                 chatBox.scrollTop = chatBox.scrollHeight;
-             }
+            // data: { id, name, msg }
+            const chatBox = document.getElementById('chat-history');
+            if (chatBox) {
+                const line = document.createElement('div');
+                line.innerHTML = `<span style="color:#aaa">&lt;${data.name}&gt;</span> ${data.msg}`;
+                chatBox.appendChild(line);
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }
         });
 
         s.on('scoreboard_update', (players) => {
-             // Update global scoreboard data
-             state.scoreboardData = players;
-             // If visible, update UI
-             const sb = document.getElementById('scoreboard');
-             if(sb && sb.style.display === 'block') {
-                 updateScoreboardUI(); 
-             }
+            // Update global scoreboard data
+            state.scoreboardData = players;
+            // If visible, update UI
+            const sb = document.getElementById('scoreboard');
+            if (sb && sb.style.display === 'block') {
+                updateScoreboardUI();
+            }
         });
 
         s.on('player_died', (data) => {
-             if (data.id === state.id) {
-                 // I died
-                 state.player.hp = 0;
-                 state.player.isDead = true;
-                 updateHUD();
-                 state.controls.unlock();
-                 document.getElementById('death-screen').style.display = 'block';
-                 document.getElementById('start-screen').style.display = 'none';
-             } else if (state.remotePlayers[data.id]) {
-                 // Remote player died
-                 state.remotePlayers[data.id].die();
-             }
-             
-             // Kill feed
-             if (data.attackerId === state.id) {
-                 // I killed them
-                 state.player.money += 300;
-                 updateHUD();
-                 playSound('buy');
-                 const kf = document.getElementById('killfeed');
-                 const div = document.createElement('div'); 
-                 div.innerText = "You killed an Enemy +$300";
-                 kf.appendChild(div);
-                 setTimeout(()=>div.remove(),3000);
-             }
+            if (data.id === state.id) {
+                // I died
+                state.player.hp = 0;
+                state.player.isDead = true;
+                updateHUD();
+                state.controls.unlock();
+                document.getElementById('death-screen').style.display = 'block';
+                document.getElementById('start-screen').style.display = 'none';
+            } else if (state.remotePlayers[data.id]) {
+                // Remote player died
+                state.remotePlayers[data.id].die();
+            }
+
+            // Kill feed
+            if (data.attackerId === state.id) {
+                // I killed them
+                state.player.money += 300;
+                updateHUD();
+                playSound('buy');
+                const kf = document.getElementById('killfeed');
+                const div = document.createElement('div');
+                div.innerText = "You killed an Enemy +$300";
+                kf.appendChild(div);
+                setTimeout(() => div.remove(), 3000);
+            }
+        });
+
+        // Voice Listeners
+        s.on('voice_start', (id) => {
+            if (state.remotePlayers[id]) {
+                state.remotePlayers[id].setTalking(true);
+            }
+        });
+
+        s.on('voice_end', (id) => {
+            if (state.remotePlayers[id]) {
+                state.remotePlayers[id].setTalking(false);
+            }
+        });
+
+        s.on('voice_data', (payload) => {
+            // payload: { id, data }
+            if (state.remotePlayers[payload.id]) {
+                playVoiceChunk(payload.data);
+            }
         });
     },
 
     sendUpdate: (pos, rot) => {
-        if(!state.socket) return;
+        if (!state.socket) return;
         // Limit update rate? throttle handled by frame rate or explicit throttling
         // For now, send every frame (simple, high bandwidth) or every X frames
         state.socket.emit('update', {
@@ -165,33 +185,64 @@ export const network = {
             rx: 0, ry: rot.y
         });
     },
-    
+
     sendShoot: () => {
-        if(!state.socket) return;
+        if (!state.socket) return;
         state.socket.emit('shoot', {});
     },
-    
+
     sendHit: (targetId, damage) => {
-        if(!state.socket) return;
+        if (!state.socket) return;
         state.socket.emit('hit', { targetId, damage });
     },
-    
+
     sendRespawn: () => {
-        if(!state.socket) return;
+        if (!state.socket) return;
         state.socket.emit('respawn');
     },
 
     sendChat: (msg) => {
-        if(!state.socket) return;
+        if (!state.socket) return;
         state.socket.emit('chat_message', msg);
+    },
+
+    // Voice
+    sendVoiceStart: () => {
+        if (!state.socket) return;
+        state.socket.emit('voice_start');
+    },
+
+    sendVoiceEnd: () => {
+        if (!state.socket) return;
+        state.socket.emit('voice_end');
+    },
+
+    sendVoiceData: (blob) => {
+        if (!state.socket) return;
+        state.socket.emit('voice_data', blob);
     }
 };
+
+// Audio Context for playback
+let audioCtx;
+
+function playVoiceChunk(data) {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // data is ArrayBuffer
+    audioCtx.decodeAudioData(data, (buffer) => {
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioCtx.destination);
+        source.start(0);
+    }, (err) => console.error("Error decoding audio", err));
+}
 
 // Helper to update Scoreboard UI (called from ui.js or network)
 export function updateScoreboardUI() {
     const sb = document.getElementById('scoreboard-list');
-    if(!sb || !state.scoreboardData) return;
-    
+    if (!sb || !state.scoreboardData) return;
+
     sb.innerHTML = `
         <tr style="color:#ffb93b; border-bottom:1px solid #555;">
             <th style="text-align:left; padding:5px;">NAME</th>
@@ -200,23 +251,23 @@ export function updateScoreboardUI() {
             <th style="padding:5px;">PING</th>
         </tr>
     `;
-    
+
     // Add self
     const myKills = state.player.kills || 0; // Need to track local kills/deaths or rely on server data
     // Actually server sends all data including self in 'scoreboard_update'
-    
-    Object.values(state.scoreboardData).sort((a,b)=>b.kills-a.kills).forEach(p => {
+
+    Object.values(state.scoreboardData).sort((a, b) => b.kills - a.kills).forEach(p => {
         const row = document.createElement('tr');
         const isMe = p.id === state.id;
         row.style.color = isMe ? '#00ff00' : 'white';
         // Ping is fake for now or we can add latency later. 
         // Let's show a random realistic ping for others, 15ms for self
-        const ping = isMe ? 15 : Math.floor(Math.random()*50 + 20); 
-        
+        const ping = isMe ? 15 : Math.floor(Math.random() * 50 + 20);
+
         row.innerHTML = `
             <td style="text-align:left; padding:5px;">${p.name}</td>
-            <td style="text-align:center; padding:5px;">${p.kills||0}</td>
-            <td style="text-align:center; padding:5px;">${p.deaths||0}</td>
+            <td style="text-align:center; padding:5px;">${p.kills || 0}</td>
+            <td style="text-align:center; padding:5px;">${p.deaths || 0}</td>
             <td style="text-align:center; padding:5px;">${ping}</td>
         `;
         sb.appendChild(row);
