@@ -3,6 +3,8 @@ import { RemotePlayer } from './remote_player.js';
 import { playSound } from './audio.js';
 import { updateHUD } from './ui.js';
 
+const MAX_CHAT_HISTORY = 200;
+
 // --- CONFIGURATION ---
 // CHANGE THIS TO YOUR RENDER URL ONCE DEPLOYED
 const PRODUCTION_SERVER_URL = "https://webcs-6js9.onrender.com";
@@ -20,6 +22,12 @@ export const network = {
         }
 
         if (!serverUrl) return;
+
+        // Prevent multiple connections or duplicate listeners
+        if (state.socket) {
+            state.socket.removeAllListeners();
+            state.socket.disconnect();
+        }
 
         state.socket = io(serverUrl);
 
@@ -107,6 +115,20 @@ export const network = {
         });
 
         s.on('chat_message', (data) => {
+            if (!state.chatMessageIds) {
+                state.chatMessageIds = new Set();
+                state.chatMessageQueue = [];
+            }
+
+            const dedupId = data.mid || `${data.id || 'unknown'}-${data.msg}-${data.ts || ''}`;
+            if (state.chatMessageIds.has(dedupId)) return;
+            state.chatMessageIds.add(dedupId);
+            state.chatMessageQueue.push(dedupId);
+            if (state.chatMessageQueue.length > MAX_CHAT_HISTORY) {
+                const oldest = state.chatMessageQueue.shift();
+                if (oldest) state.chatMessageIds.delete(oldest);
+            }
+
             // data: { id, name, msg }
             const chatBox = document.getElementById('chat-history');
             if (chatBox) {
@@ -233,13 +255,35 @@ function playVoiceChunk(data) {
         audioCtx.resume();
     }
 
-    // data is ArrayBuffer
-    audioCtx.decodeAudioData(data, (buffer) => {
-        const source = audioCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(audioCtx.destination);
-        source.start(0);
-    }, (err) => console.error("Error decoding audio", err));
+    // Decode raw data (from Blob/ArrayBuffer) to PCM
+    // NOTE: MediaRecorder usually gives WEBM/OPUS chunks.
+    // decodeAudioData is good but might be tricky with small chunks of stream data.
+    // However, for "press T to talk" it usually sends a decent chunk.
+    
+    // Ensure data is an ArrayBuffer
+    let arrayBuffer = data;
+    if (data instanceof Blob) {
+         data.arrayBuffer().then(buf => playVoiceChunk(buf));
+         return;
+    }
+
+    try {
+        // Make a copy of buffer because decodeAudioData detaches it
+        const bufferCopy = data.slice(0);
+        audioCtx.decodeAudioData(bufferCopy, (buffer) => {
+            const source = audioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioCtx.destination);
+            source.start(0);
+        }, (err) => {
+            // It's common to get decode errors on partial webm chunks
+            // Real implementation would use SourceBuffer/MediaSource extensions or similar
+            // But for simple hack, we suppress or log
+            // console.error("Error decoding audio chunk", err);
+        });
+    } catch(e) {
+        console.error("Audio processing error", e);
+    }
 }
 
 // Helper to update Scoreboard UI (called from ui.js or network)

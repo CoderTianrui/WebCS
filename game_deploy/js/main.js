@@ -165,11 +165,17 @@ function animate() {
             if (dist < 150 && state.player.hp > 0 && time - e.lastShot > 1000 && visible) {
                 e.lastShot = time + Math.random() * 500;
                 const start = e.mesh.position.clone().add(new THREE.Vector3(0, 7, 0));
-                const end = playerPos.clone().add(new THREE.Vector3((Math.random() - .5) * 5, -2, (Math.random() - .5) * 5));
-                createTracer(start, end, 0xff0000);
+                const intendedEnd = playerPos.clone().add(new THREE.Vector3((Math.random() - .5) * 5, -2, (Math.random() - .5) * 5));
+                const shotVector = intendedEnd.clone().sub(start);
+                const shotDistance = shotVector.length();
+                const bulletRay = new THREE.Raycaster(start, shotVector.clone().normalize(), 0, shotDistance);
+                const blockers = bulletRay.intersectObjects(state.objects, true);
+                const hitWall = blockers.length > 0;
+                const tracerEnd = hitWall ? blockers[0].point : intendedEnd;
+                createTracer(start, tracerEnd, 0xff0000);
                 playSound('enemy_fire');
 
-                if (Math.random() > (state.crouch ? 0.8 : 0.6)) { // Harder to hit if crouching
+                if (!hitWall && Math.random() > (state.crouch ? 0.8 : 0.6)) { // Harder to hit if crouching
                     state.player.hp -= 10;
                     updateHUD();
                     document.getElementById('damage-flash').style.opacity = 1;

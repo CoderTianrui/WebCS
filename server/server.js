@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const { io: ClientIO } = require('socket.io-client');
 const path = require('path');
 
 const app = express();
@@ -18,17 +19,25 @@ app.use(express.static(path.join(__dirname, '../game_deploy')));
 const rooms = {}; // { roomId: { players: { socketId: { x,y,z, name, hp } } } }
 const DEFAULT_SPAWN = { x: 0, y: 10, z: 100, ry: Math.PI };
 
+const ZOMBIE_ROOM = process.env.ZOMBIE_ROOM || 'global';
+const ZOMBIE_NAME = process.env.ZOMBIE_NAME || '[BOT] Zombie';
+const ZOMBIE_UPDATE_MS = Number(process.env.ZOMBIE_UPDATE_MS) || 8000;
+const ENABLE_ZOMBIE = process.env.DISABLE_ZOMBIE === 'true' ? false : true;
+let zombieClient = null;
+let zombieInterval = null;
+
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
-    socket.on('join', ({ name, room }) => {
+    socket.on('join', ({ name, room, isBot }) => {
         // Initialize room if not exists
         if (!rooms[room]) {
             rooms[room] = { players: {} };
         }
 
-        const currentPlayers = Object.keys(rooms[room].players).length;
-        if (currentPlayers >= 5) {
+        const isZombieClient = !!isBot && name === ZOMBIE_NAME;
+        const currentPlayers = Object.values(rooms[room].players).filter(p => !p.isZombie).length;
+        if (!isZombieClient && currentPlayers >= 5) {
             socket.emit('error_msg', 'Room is full (Max 5)');
             return;
         }
@@ -49,7 +58,8 @@ io.on('connection', (socket) => {
             isDead: false,
             kills: 0,
             deaths: 0,
-            lastAction: Date.now()
+            lastAction: Date.now(),
+            isZombie: isZombieClient
         };
 
         socket.emit('joined', { id: socket.id, players: rooms[room].players });
@@ -99,7 +109,14 @@ io.on('connection', (socket) => {
         // Handle Chat
         socket.on('chat_message', (msg) => {
             updateActivity();
-            io.to(room).emit('chat_message', { id: socket.id, name: rooms[room].players[socket.id].name, msg });
+            const messageId = `${socket.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            io.to(room).emit('chat_message', {
+                id: socket.id,
+                name: rooms[room].players[socket.id].name,
+                msg,
+                mid: messageId,
+                ts: Date.now()
+            });
         });
 
         // Handle Respawn
@@ -181,6 +198,7 @@ setInterval(() => {
         const room = rooms[roomId];
         Object.keys(room.players).forEach(socketId => {
             const p = room.players[socketId];
+            if (p.isZombie) return;
             const idleTime = now - p.lastAction;
 
             // Warning at 50s (10s before kick)
@@ -205,8 +223,55 @@ setInterval(() => {
     });
 }, 1000);
 
+function startZombieClient(port) {
+    if (!ENABLE_ZOMBIE || zombieClient) return;
+
+    const targetUrl = process.env.ZOMBIE_TARGET || `http://127.0.0.1:${port}`;
+    zombieClient = ClientIO(targetUrl, {
+        transports: ['websocket'],
+        reconnectionDelayMax: 5000
+    });
+
+    zombieClient.on('connect', () => {
+        console.log('Zombie bot connected to server');
+        zombieClient.emit('join', {
+            name: ZOMBIE_NAME,
+            room: ZOMBIE_ROOM,
+            isBot: true
+        });
+    });
+
+    zombieClient.on('disconnect', () => {
+        console.log('Zombie bot disconnected, waiting for reconnect...');
+    });
+
+    zombieClient.on('connect_error', (err) => {
+        console.error('Zombie bot connection error:', err.message);
+    });
+
+    zombieInterval = setInterval(() => {
+        if (zombieClient && zombieClient.connected) {
+            const wander = (Date.now() / 4000);
+            zombieClient.emit('update', {
+                x: DEFAULT_SPAWN.x + Math.cos(wander) * 5,
+                y: DEFAULT_SPAWN.y,
+                z: DEFAULT_SPAWN.z + Math.sin(wander) * 5,
+                rx: 0,
+                ry: wander % (Math.PI * 2)
+            });
+        }
+    }, ZOMBIE_UPDATE_MS);
+}
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    startZombieClient(PORT);
+});
+
+process.on('SIGINT', () => {
+    if (zombieInterval) clearInterval(zombieInterval);
+    if (zombieClient) zombieClient.close();
+    process.exit(0);
 });
 

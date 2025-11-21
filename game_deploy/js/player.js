@@ -33,7 +33,7 @@ function startRecording() {
     }
     if (mediaRecorder && mediaRecorder.state === 'recording') return;
 
-    mediaRecorder = new MediaRecorder(voiceStream);
+    mediaRecorder = new MediaRecorder(voiceStream, { mimeType: 'audio/webm;codecs=opus' });
     mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
             network.sendVoiceData(e.data);
@@ -147,8 +147,11 @@ export function fireWeapon() {
     let hitRemotePlayerId = null;
 
     // FIXED HIT DETECTION LOGIC
+    const maxDist = stat.type === 'melee' ? 6 : 1000; // Increased range for knife (6)
+    
     for (let h of hits) {
         if (h.distance < 1) continue; // Skip self/close artifacts
+        if (h.distance > maxDist) break; // Too far (hits are sorted, so we can break early)
 
         let obj = h.object;
 
@@ -240,8 +243,18 @@ export function fireWeapon() {
             network.sendHit(hitRemotePlayerId, stat.dmg);
         } else {
             // Hit Wall
-            createHole(targetHit.point, targetHit.face.normal);
-            spawnParticles(targetHit.point, 0xaaaaaa, 3); // Dust/Sparks
+            // If knife, make scratch
+            if (stat.type === 'melee') {
+                 // Scratch effect (using createHole but could be customized)
+                 // Ideally we'd rotate it or stretch it to look like a slash
+                 createHole(targetHit.point, targetHit.face.normal); 
+                 // Add sparks specifically for knife on wall
+                 spawnParticles(targetHit.point, 0xffff00, 5);
+                 playSound('hit'); // Knife hitting wall sound
+            } else {
+                 createHole(targetHit.point, targetHit.face.normal);
+                 spawnParticles(targetHit.point, 0xaaaaaa, 3); // Dust/Sparks
+            }
         }
     }
 }
@@ -299,14 +312,26 @@ export function onKeyDown(e) {
     if (isChatVisible) {
         // If chat is open, capture inputs
         if (isEnterKey(e)) {
+            e.preventDefault();
+            e.stopPropagation(); 
+            
+            // Debounce: Check if we just sent a message recently (e.g. < 200ms) to prevent double sends from keyboard repeat or event bubbles
+            const now = performance.now();
+            if (state.lastChatTime && now - state.lastChatTime < 200) return;
+            
             const msg = chatInput.value.trim();
             if (msg.length > 0 && state.gameMode === 'multi') {
                 network.sendChat(msg);
+                state.lastChatTime = now;
             }
             chatInput.value = '';
             chatInput.style.display = 'none'; // Hide
             chatInput.blur();
-            state.controls.lock(); // Re-lock game
+            
+            // Fix stuck view: ensure pointer lock is requested properly with a slight delay to clear the UI stack
+            setTimeout(() => {
+                state.controls.lock(); 
+            }, 50);
             return;
         }
         if (isEscapeKey(e)) {

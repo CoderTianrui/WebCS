@@ -14,6 +14,8 @@ export const state = {
     id: null, // My Socket ID
     room: null,
     remotePlayers: {}, // { socketId: RemotePlayerObject }
+    chatMessageIds: new Set(),
+    chatMessageQueue: [],
 
     // Input
     moveF: false,
@@ -45,6 +47,9 @@ export const state = {
 
     // Visuals
     weaponGroup: null,
+
+    // Mobile Flag
+    isMobile: false,
 
     // Time
     prevTime: performance.now()
