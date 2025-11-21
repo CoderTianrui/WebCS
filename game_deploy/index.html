@@ -3,6 +3,9 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>CS 1.6 Web - Multiplayer</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -81,6 +84,17 @@
         <div class="menu-btn" id="start-btn">CLICK TO START</div>
     </div>
 
+    <script>
+        (function clearCaches() {
+            if ('caches' in window) {
+                caches.keys().then(keys => Promise.all(keys.map(key => caches.delete(key))));
+            }
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(reg => reg.unregister()));
+            }
+        })();
+    </script>
+
     <script type="importmap">
     {
         "imports": {
@@ -91,10 +105,11 @@
 </script>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script type="module">
-        import { initLoginUI } from './js/ui.js';
-        import './js/main.js';
-
-        initLoginUI();
+        const version = Date.now();
+        import(`./js/main.js?v=${version}`);
+        import(`./js/ui.js?v=${version}`).then(mod => {
+            if (mod?.initLoginUI) mod.initLoginUI();
+        });
     </script>
 </body>
 

@@ -13,6 +13,15 @@ const io = new Server(server, {
     }
 });
 
+// Force no-cache headers so clients always fetch latest assets
+app.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
+    next();
+});
+
 // Serve static files (for testing locally)
 app.use(express.static(path.join(__dirname, '../game_deploy')));
 
@@ -25,6 +34,12 @@ const ZOMBIE_UPDATE_MS = Number(process.env.ZOMBIE_UPDATE_MS) || 8000;
 const ENABLE_ZOMBIE = process.env.DISABLE_ZOMBIE === 'true' ? false : true;
 let zombieClient = null;
 let zombieInterval = null;
+
+function broadcastScoreboard(roomId) {
+    if (rooms[roomId]) {
+        io.to(roomId).emit('scoreboard_update', rooms[roomId].players);
+    }
+}
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
@@ -64,6 +79,7 @@ io.on('connection', (socket) => {
 
         socket.emit('joined', { id: socket.id, players: rooms[room].players });
         socket.to(room).emit('player_joined', rooms[room].players[socket.id]);
+        broadcastScoreboard(room);
 
         console.log(`${name} joined room ${room}`);
 
@@ -74,6 +90,8 @@ io.on('connection', (socket) => {
                 io.to(room).emit('player_left', socket.id);
                 if (Object.keys(rooms[room].players).length === 0) {
                     delete rooms[room];
+                } else {
+                    broadcastScoreboard(room);
                 }
             }
         });

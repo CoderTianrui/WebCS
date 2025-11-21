@@ -16,15 +16,6 @@ function scheduleFrame(fn) {
     }
 }
 
-function ensureChatBuffers() {
-    if (!state.chatMessageIds) {
-        state.chatMessageIds = new Set();
-    }
-    if (!state.chatMessageQueue) {
-        state.chatMessageQueue = [];
-    }
-}
-
 function scheduleChatRender() {
     if (chatRenderScheduled) return;
     chatRenderScheduled = true;
@@ -75,31 +66,6 @@ function ensureChatBuffers() {
     if (!state.chatMessageQueue) {
         state.chatMessageQueue = [];
     }
-}
-
-export function appendChatMessage(data) {
-    if (!data || !data.msg) return false;
-    ensureChatBuffers();
-
-    const dedupId = data.mid || `${data.id || 'unknown'}-${data.msg}-${data.ts || ''}`;
-    if (state.chatMessageIds.has(dedupId)) return false;
-
-    state.chatMessageIds.add(dedupId);
-    state.chatMessageQueue.push(dedupId);
-    if (state.chatMessageQueue.length > MAX_CHAT_HISTORY) {
-        const oldest = state.chatMessageQueue.shift();
-        if (oldest) state.chatMessageIds.delete(oldest);
-    }
-
-    const chatBox = document.getElementById('chat-history');
-    if (chatBox) {
-        const displayName = data.self ? `${data.name || 'You'} (You)` : (data.name || 'Player');
-        const line = document.createElement('div');
-        line.innerHTML = `<span style="color:#aaa">&lt;${displayName}&gt;</span> ${data.msg}`;
-        chatBox.appendChild(line);
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }
-    return true;
 }
 
 // --- CONFIGURATION ---
@@ -169,10 +135,16 @@ export const network = {
         });
 
         s.on('player_joined', (p) => {
-            if (p.id === state.id) return;
-            if (state.remotePlayers[p.id]) return;
-            state.remotePlayers[p.id] = new RemotePlayer(p.id, p.name, p);
-            // Maybe add chat message: p.name joined
+            if (p.id !== state.id && !state.remotePlayers[p.id]) {
+                state.remotePlayers[p.id] = new RemotePlayer(p.id, p.name, p);
+            }
+            appendChatMessage({
+                id: 'server',
+                name: 'SERVER',
+                msg: `<span style="color:#4caf50">${p.name || 'Someone'} joined the room.</span>`,
+                mid: `join-${p.id}-${Date.now()}`,
+                ts: Date.now()
+            });
         });
 
         s.on('player_left', (id) => {
