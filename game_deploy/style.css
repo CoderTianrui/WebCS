@@ -99,3 +99,41 @@ body { margin: 0; overflow: hidden; background: #111; font-family: 'Arial', sans
     z-index: 100; display: none;
 }
 #scoreboard h3 { margin-top: 0; text-align: center; color: #ffb93b; }
+
+#hints-panel {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: 280px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 185, 59, 0.4);
+    color: #e0e0e0;
+    font-size: 14px;
+    padding: 10px;
+    line-height: 1.4;
+    pointer-events: none;
+    text-shadow: 1px 1px 0 #000;
+}
+#hints-panel strong { color: #ffb93b; }
+
+#bomb-indicator {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 8px 12px;
+    background: rgba(255, 64, 64, 0.8);
+    border: 1px solid rgba(255, 0, 0, 0.6);
+    color: #fff;
+    font-weight: bold;
+    font-size: 16px;
+    text-shadow: 1px 1px 0 #000;
+    display: none;
+}
+
+.menu-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    width: 100%;
+    max-width: 700px;
+}

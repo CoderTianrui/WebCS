@@ -41,19 +41,25 @@
                 <!-- Rows injected by JS -->
             </table>
         </div>
+        <div id="hints-panel"></div>
+        <div id="bomb-indicator"></div>
     </div>
 
     <!-- LOGIN MODAL -->
     <div id="login-modal">
         <h1>CS 1.6 WEB: GAME MODES WITH VOICE CHAT</h1>
-        <input type="text" id="player-name" placeholder="Enter Name (for Multiplayer)" maxlength="15">
+        <input type="text" id="player-name" placeholder="Enter Name (Multiplayer)" maxlength="15">
 
-        <div style="display: flex; gap: 20px;">
-            <div class="menu-btn" id="singleplayer-btn">SINGLE PLAYER (vs Bots)</div>
-            <div class="menu-btn" id="multiplayer-btn">MULTIPLAYER (vs People)</div>
+        <div class="menu-grid">
+            <div class="menu-btn" id="singleplayer-btn">Classic Practice (vs Bots)</div>
+            <div class="menu-btn" id="ai-ct-btn">AI CT/T Bomb Mode</div>
+            <div class="menu-btn" id="multiplayer-btn">Multiplayer FFA</div>
+            <div class="menu-btn" id="ctt-btn">Multiplayer CT/T Bomb</div>
         </div>
 
-        <p style="font-size: 12px; color: #888;">Multiplayer connects to global room.</p>
+        <p style="font-size: 12px; color: #888; margin-top:15px;">
+            Voice Key: <strong>T</strong> | Plant: <strong>G</strong> | Defuse: <strong>H</strong> | Shop: <strong>B</strong> | Settings: <strong>ESC</strong>
+        </p>
     </div>
 
     <!-- SHOP -->
@@ -78,10 +84,24 @@
 
     <!-- START SCREEN -->
     <div id="start-screen" style="display:none;">
-        <h1>CS 1.6 WEB: FIX & FEATURES!!!</h1>
-        <p>WASD: Move | CTRL: Crouch | R: Reload</p>
-        <p>1: Primary; | 2: Pistol | 3: Knife</p>
+        <h1>CS 1.6 WEB: MODE BRIEFING</h1>
+        <p>WASD: Move | CTRL: Crouch | Space: Jump | Shift: Walk</p>
+        <p>1: Primary | 2: Secondary | 3: Knife | B: Buy | G/H: Plant/Defuse | T: Voice</p>
         <div class="menu-btn" id="start-btn">CLICK TO START</div>
+    </div>
+
+    <div id="settings-menu" class="menu-box" style="display:none; z-index:50;">
+        <h2>SETTINGS</h2>
+        <div class="menu-btn" id="settings-resume">RESUME</div>
+        <div class="menu-btn" id="settings-quit">QUIT TO MENU</div>
+        <div class="menu-btn" id="settings-switch">SWITCH MODE</div>
+    </div>
+
+    <div id="team-select-modal" class="menu-box" style="display:none; z-index:60;">
+        <h2>SELECT YOUR TEAM</h2>
+        <div class="menu-btn" id="team-ct">COUNTER-TERRORIST</div>
+        <div class="menu-btn" id="team-t">TERRORIST</div>
+        <p style="font-size:12px; color:#aaa;">Balanced teams will auto-assign if full.</p>
     </div>
 
     <script>
@@ -107,9 +127,6 @@
     <script type="module">
         const version = Date.now();
         import(`./js/main.js?v=${version}`);
-        import(`./js/ui.js?v=${version}`).then(mod => {
-            if (mod?.initLoginUI) mod.initLoginUI();
-        });
     </script>
 </body>
 

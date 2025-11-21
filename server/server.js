@@ -25,8 +25,9 @@ app.use((req, res, next) => {
 // Serve static files (for testing locally)
 app.use(express.static(path.join(__dirname, '../game_deploy')));
 
-const rooms = {}; // { roomId: { players: { socketId: { x,y,z, name, hp } } } }
+const rooms = {}; // { roomId: { players: {...}, mode: 'ffa'|'ctt', bomb: {...} } }
 const DEFAULT_SPAWN = { x: 0, y: 10, z: 100, ry: Math.PI };
+const BOMB_TIMER_SECONDS = 40;
 
 const ZOMBIE_ROOM = process.env.ZOMBIE_ROOM || 'global';
 const ZOMBIE_NAME = process.env.ZOMBIE_NAME || '[BOT] Zombie';
@@ -41,27 +42,107 @@ function broadcastScoreboard(roomId) {
     }
 }
 
+function createBombState() {
+    return {
+        carrierId: null,
+        planted: false,
+        site: null,
+        plantedAt: 0,
+        explodeTimer: null
+    };
+}
+
+function ensureRoom(roomId, mode = 'ffa') {
+    if (!rooms[roomId]) {
+        rooms[roomId] = { players: {}, mode, bomb: createBombState() };
+    } else if (!rooms[roomId].bomb) {
+        rooms[roomId].bomb = createBombState();
+    }
+    if (!rooms[roomId].mode) rooms[roomId].mode = mode;
+}
+
+function assignTeam(roomData, preferred) {
+    const counts = { CT: 0, T: 0 };
+    Object.values(roomData.players).forEach(p => {
+        if (p.team === 'CT') counts.CT++;
+        if (p.team === 'T') counts.T++;
+    });
+    let team = preferred;
+    if (!team || counts[team] > counts[team === 'CT' ? 'T' : 'CT']) {
+        team = counts.CT <= counts.T ? 'CT' : 'T';
+    }
+    return team;
+}
+
+function assignBombCarrier(roomId) {
+    const room = rooms[roomId];
+    if (!room || room.mode !== 'ctt') return;
+    const carrier = Object.values(room.players).find(p => p.team === 'T');
+    room.bomb.carrierId = carrier ? carrier.id : null;
+    io.to(roomId).emit('bomb_carrier', { id: room.bomb.carrierId });
+}
+
+function endRound(roomId, winnerLabel, message) {
+    const room = rooms[roomId];
+    if (!room) return;
+    if (room.bomb?.explodeTimer) {
+        clearTimeout(room.bomb.explodeTimer);
+        room.bomb.explodeTimer = null;
+    }
+    io.to(roomId).emit('round_result', {
+        winner: winnerLabel,
+        message,
+        color: winnerLabel === 'COUNTER-TERRORISTS' ? 'rgba(76,175,80,0.85)' : 'rgba(255,64,64,0.9)'
+    });
+    room.bomb = createBombState();
+    assignBombCarrier(roomId);
+}
+
+function emitVoice(roomId, socket, eventName, payload) {
+    const room = rooms[roomId];
+    if (!room) return;
+    const sender = room.players[socket.id];
+    if (!sender) return;
+    if (room.mode === 'ctt') {
+        Object.keys(room.players).forEach(id => {
+            if (id === socket.id) return;
+            if (room.players[id].team === sender.team) {
+                io.to(id).emit(eventName, payload);
+            }
+        });
+    } else {
+        socket.to(roomId).emit(eventName, payload);
+    }
+}
+
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
-    socket.on('join', ({ name, room, isBot }) => {
+    socket.on('join', ({ name, room, isBot, mode, teamPreference }) => {
+        const roomId = room || 'global';
         // Initialize room if not exists
-        if (!rooms[room]) {
-            rooms[room] = { players: {} };
-        }
+        ensureRoom(roomId, mode || 'ffa');
+
+        const roomData = rooms[roomId];
+        const isCTTRoom = roomData.mode === 'ctt';
 
         const isZombieClient = !!isBot && name === ZOMBIE_NAME;
-        const currentPlayers = Object.values(rooms[room].players).filter(p => !p.isZombie).length;
+        const currentPlayers = Object.values(roomData.players).filter(p => !p.isZombie).length;
         if (!isZombieClient && currentPlayers >= 5) {
             socket.emit('error_msg', 'Room is full (Max 5)');
             return;
         }
 
         // Join room
-        socket.join(room);
+        socket.join(roomId);
 
         // Initial state
-        rooms[room].players[socket.id] = {
+        let playerTeam = null;
+        if (isCTTRoom && !isZombieClient) {
+            playerTeam = assignTeam(roomData, teamPreference);
+        }
+
+        roomData.players[socket.id] = {
             id: socket.id,
             name: name || `Player ${socket.id.substr(0, 4)}`,
             x: DEFAULT_SPAWN.x,
@@ -74,39 +155,56 @@ io.on('connection', (socket) => {
             kills: 0,
             deaths: 0,
             lastAction: Date.now(),
-            isZombie: isZombieClient
+            isZombie: isZombieClient,
+            team: playerTeam
         };
+        roomData.players[socket.id].id = socket.id;
 
-        socket.emit('joined', { id: socket.id, players: rooms[room].players });
-        socket.to(room).emit('player_joined', rooms[room].players[socket.id]);
-        broadcastScoreboard(room);
+        socket.emit('joined', { id: socket.id, players: roomData.players });
+        socket.to(roomId).emit('player_joined', roomData.players[socket.id]);
+        broadcastScoreboard(roomId);
 
-        console.log(`${name} joined room ${room}`);
+        if (isCTTRoom && !isZombieClient) {
+            socket.emit('team_assignment', { team: playerTeam, mode: roomData.mode, isCarrier: roomData.bomb.carrierId === socket.id });
+            socket.to(roomId).emit('team_assignment', { id: socket.id, team: playerTeam });
+            if (playerTeam === 'T' && !roomData.bomb.carrierId) {
+                roomData.bomb.carrierId = socket.id;
+                io.to(roomId).emit('bomb_carrier', { id: socket.id });
+            } else if (roomData.bomb.carrierId) {
+                socket.emit('bomb_carrier', { id: roomData.bomb.carrierId });
+            }
+        }
+
+        console.log(`${name} joined room ${roomId}`);
 
         // Handle Disconnect
         socket.on('disconnect', () => {
-            if (rooms[room] && rooms[room].players[socket.id]) {
-                delete rooms[room].players[socket.id];
-                io.to(room).emit('player_left', socket.id);
-                if (Object.keys(rooms[room].players).length === 0) {
-                    delete rooms[room];
+            if (rooms[roomId] && rooms[roomId].players[socket.id]) {
+                if (rooms[roomId].mode === 'ctt' && rooms[roomId].bomb?.carrierId === socket.id) {
+                    rooms[roomId].bomb.carrierId = null;
+                    assignBombCarrier(roomId);
+                }
+                delete rooms[roomId].players[socket.id];
+                io.to(roomId).emit('player_left', socket.id);
+                if (Object.keys(rooms[roomId].players).length === 0) {
+                    delete rooms[roomId];
                 } else {
-                    broadcastScoreboard(room);
+                    broadcastScoreboard(roomId);
                 }
             }
         });
 
         // Track activity
         const updateActivity = () => {
-            if (rooms[room] && rooms[room].players[socket.id]) {
-                rooms[room].players[socket.id].lastAction = Date.now();
+            if (rooms[roomId] && rooms[roomId].players[socket.id]) {
+                rooms[roomId].players[socket.id].lastAction = Date.now();
             }
         };
 
         // Handle Updates
         socket.on('update', (data) => {
-            if (rooms[room] && rooms[room].players[socket.id]) {
-                const p = rooms[room].players[socket.id];
+            if (rooms[roomId] && rooms[roomId].players[socket.id]) {
+                const p = rooms[roomId].players[socket.id];
                 // Check if position changed significantly to count as activity
                 if (Math.abs(p.x - data.x) > 0.1 || Math.abs(p.z - data.z) > 0.1 || Math.abs(p.ry - data.ry) > 0.1) {
                     p.lastAction = Date.now();
@@ -115,7 +213,7 @@ io.on('connection', (socket) => {
                 p.x = data.x; p.y = data.y; p.z = data.z;
                 p.rx = data.rx; p.ry = data.ry;
                 // Broadcast to others (volatile for performance)
-                socket.to(room).volatile.emit('player_update', {
+                socket.to(roomId).volatile.emit('player_update', {
                     id: socket.id,
                     ...data,
                     hp: p.hp,
@@ -129,13 +227,13 @@ io.on('connection', (socket) => {
             updateActivity();
             const raw = typeof payload === 'string' ? payload : (payload?.msg ?? '');
             const text = typeof raw === 'string' ? raw.trim() : '';
-            if (!text || !rooms[room]?.players[socket.id]) return;
+            if (!text || !rooms[roomId]?.players[socket.id]) return;
             const clientMid = typeof payload === 'object' && payload?.mid ? String(payload.mid) : null;
             const clientTs = typeof payload === 'object' && payload?.ts ? Number(payload.ts) : Date.now();
             const messageId = clientMid || `${socket.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-            io.to(room).emit('chat_message', {
+            io.to(roomId).emit('chat_message', {
                 id: socket.id,
-                name: rooms[room].players[socket.id].name,
+                name: rooms[roomId].players[socket.id].name,
                 msg: text,
                 mid: messageId,
                 ts: clientTs || Date.now()
@@ -145,15 +243,15 @@ io.on('connection', (socket) => {
         // Handle Respawn
         socket.on('respawn', () => {
             updateActivity();
-            if (rooms[room] && rooms[room].players[socket.id]) {
-                const player = rooms[room].players[socket.id];
+            if (rooms[roomId] && rooms[roomId].players[socket.id]) {
+                const player = rooms[roomId].players[socket.id];
                 player.hp = 100;
                 player.isDead = false;
                 player.x = DEFAULT_SPAWN.x;
                 player.y = DEFAULT_SPAWN.y;
                 player.z = DEFAULT_SPAWN.z;
                 player.ry = DEFAULT_SPAWN.ry;
-                io.to(room).emit('player_respawn', {
+                io.to(roomId).emit('player_respawn', {
                     id: socket.id,
                     x: player.x,
                     y: player.y,
@@ -172,44 +270,78 @@ io.on('connection', (socket) => {
 
         socket.on('hit', (data) => {
             // data: { targetId, damage }
-            if (rooms[room] && rooms[room].players[data.targetId]) {
-                const target = rooms[room].players[data.targetId];
+            if (rooms[roomId] && rooms[roomId].players[data.targetId]) {
+                const target = rooms[roomId].players[data.targetId];
                 const attackerId = socket.id; // Use local var to be safe
                 target.hp -= data.damage;
-                io.to(room).emit('player_damaged', { id: data.targetId, hp: target.hp, attackerId: attackerId });
+                io.to(roomId).emit('player_damaged', { id: data.targetId, hp: target.hp, attackerId: attackerId });
 
                 if (target.hp <= 0) {
                     // Reset HP for respawn logic if needed, or let client handle
                     target.hp = 0; // Keep at 0 to mark as dead
                     target.isDead = true;
                     target.deaths++;
-                    if (rooms[room].players[attackerId]) rooms[room].players[attackerId].kills++;
+                    if (rooms[roomId].players[attackerId]) rooms[roomId].players[attackerId].kills++;
 
-                    io.to(room).emit('player_died', {
+                    io.to(roomId).emit('player_died', {
                         id: data.targetId,
                         attackerId: attackerId,
-                        kills: rooms[room].players[attackerId]?.kills || 0,
+                        kills: rooms[roomId].players[attackerId]?.kills || 0,
                         deaths: target.deaths
                     });
 
                     // Broadcast updated scoreboard data
-                    io.to(room).emit('scoreboard_update', rooms[room].players);
+                    io.to(roomId).emit('scoreboard_update', rooms[roomId].players);
                 }
             }
         });
 
+        socket.on('plant_bomb', ({ site }) => {
+            updateActivity();
+            const roomInfo = rooms[roomId];
+            if (!roomInfo || roomInfo.mode !== 'ctt') return;
+            const player = roomInfo.players[socket.id];
+            if (!player || player.team !== 'T') return;
+            if (roomInfo.bomb.planted || roomInfo.bomb.carrierId !== socket.id) return;
+            const siteName = site === 'B' ? 'B' : 'A';
+            roomInfo.bomb.planted = true;
+            roomInfo.bomb.site = siteName;
+            roomInfo.bomb.plantedAt = Date.now();
+            roomInfo.bomb.carrierId = null;
+            if (roomInfo.bomb.explodeTimer) clearTimeout(roomInfo.bomb.explodeTimer);
+            roomInfo.bomb.explodeTimer = setTimeout(() => {
+                endRound(roomId, 'TERRORISTS', 'Bomb exploded! Terrorists win.');
+            }, BOMB_TIMER_SECONDS * 1000);
+            io.to(roomId).emit('bomb_planted', {
+                site: siteName,
+                plantedBy: socket.id,
+                plantedAt: roomInfo.bomb.plantedAt,
+                explodeTime: roomInfo.bomb.plantedAt + (BOMB_TIMER_SECONDS * 1000)
+            });
+        });
+
+        socket.on('defuse_bomb', () => {
+            updateActivity();
+            const roomInfo = rooms[roomId];
+            if (!roomInfo || roomInfo.mode !== 'ctt' || !roomInfo.bomb.planted) return;
+            const player = roomInfo.players[socket.id];
+            if (!player || player.team !== 'CT') return;
+            io.to(roomId).emit('bomb_defused', { by: socket.id, message: 'Bomb defused! CT win.' });
+            endRound(roomId, 'COUNTER-TERRORISTS', 'Bomb defused! CT win.');
+        });
+
         // Voice Chat
         socket.on('voice_start', () => {
-            socket.to(room).emit('voice_start', socket.id);
+            emitVoice(roomId, socket, 'voice_start', socket.id);
         });
 
         socket.on('voice_end', () => {
-            socket.to(room).emit('voice_end', socket.id);
+            emitVoice(roomId, socket, 'voice_end', socket.id);
         });
 
         socket.on('voice_data', (data) => {
             // data is the audio chunk (ArrayBuffer or Blob)
-            socket.to(room).emit('voice_data', { id: socket.id, data: data });
+            emitVoice(roomId, socket, 'voice_data', { id: socket.id, data: data });
         });
     });
 });
@@ -260,7 +392,8 @@ function startZombieClient(port) {
         zombieClient.emit('join', {
             name: ZOMBIE_NAME,
             room: ZOMBIE_ROOM,
-            isBot: true
+            isBot: true,
+            mode: 'ffa'
         });
     });
 

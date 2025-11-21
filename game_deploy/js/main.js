@@ -9,8 +9,83 @@ import { updateHUD } from './ui.js';
 import { playSound, toggleMusic } from './audio.js';
 import { createTracer } from './utils.js';
 import { network } from './network.js';
-import { initLoginUI } from './ui.js';
+import { initLoginUI, setModeHints, updateBombIndicator } from './ui.js';
 import rendererInstance from './renderer.js';
+
+const BOMB_TIMER_SECONDS = 40;
+const tempBox = new THREE.Box3();
+const tempVec = new THREE.Vector3();
+
+function resetBombState() {
+    if (!state.bomb) return;
+    state.bomb.hasBomb = false;
+    state.bomb.isPlanted = false;
+    state.bomb.site = null;
+    state.bomb.plantedAt = 0;
+    state.bomb.explodeTime = 0;
+    updateBombIndicator('');
+}
+
+function getBombSiteAtPosition(position) {
+    if (!state.bombSites || !state.bombSites.length || !position) return null;
+    return state.bombSites.find(site => site.position.distanceTo(position) <= site.radius) || null;
+}
+
+function updateBombTimers() {
+    if (!state.bomb) return;
+    if (state.bomb.isPlanted && state.bomb.explodeTime) {
+        const now = performance.now();
+        const msLeft = state.bomb.explodeTime - now;
+        if (msLeft <= 0) {
+            state.bomb.isPlanted = false;
+            state.bomb.explodeTime = 0;
+            if (state.gameMode === 'ai_ct') {
+                updateBombIndicator('Bomb exploded! Terrorists win.', 'rgba(255,64,64,0.9)');
+            } else {
+                updateBombIndicator('');
+            }
+            return;
+        }
+        const seconds = Math.ceil(msLeft / 1000);
+        updateBombIndicator(`Bomb ${state.bomb.site || ''}: ${seconds}s`, 'rgba(255,64,64,0.8)');
+    } else if (state.bomb.hasBomb) {
+        updateBombIndicator('You have the bomb. Plant with G.', 'rgba(255,152,0,0.85)');
+    } else {
+        updateBombIndicator('');
+    }
+}
+
+function resolvePlayerCollisions(position) {
+    if (!state.objects || !position) return;
+    const radius = 5;
+    state.objects.forEach(obj => {
+        if (!obj.geometry || !obj.geometry.boundingBox || !obj.isWall) return;
+        tempBox.copy(obj.geometry.boundingBox).applyMatrix4(obj.matrixWorld);
+        if (position.y < tempBox.min.y - 10 || position.y > tempBox.max.y + 20) return;
+        if (position.x < tempBox.min.x - radius || position.x > tempBox.max.x + radius) return;
+        if (position.z < tempBox.min.z - radius || position.z > tempBox.max.z + radius) return;
+        const dx = Math.min(position.x - (tempBox.min.x - radius), (tempBox.max.x + radius) - position.x);
+        const dz = Math.min(position.z - (tempBox.min.z - radius), (tempBox.max.z + radius) - position.z);
+        if (dx > 0 && dz > 0) {
+            if (dx < dz) {
+                position.x += position.x > tempBox.getCenter(tempVec).x ? dx : -dx;
+                state.velocity.x = 0;
+            } else {
+                position.z += position.z > tempBox.getCenter(tempVec).z ? dz : -dz;
+                state.velocity.z = 0;
+            }
+        }
+    });
+}
+
+function disconnectMultiplayer() {
+    if (state.socket) {
+        state.socket.removeAllListeners();
+        state.socket.disconnect();
+        state.socket = null;
+    }
+    state.remotePlayers = {};
+}
 
 // Global collision checker (moved from game.js)
 function checkPlayerCollisions(currPos) {
@@ -110,8 +185,10 @@ function animate() {
                 state.velocity.z = 0;
             }
 
+            resolvePlayerCollisions(playerObj.position);
+
             // Send Network Update if Multiplayer
-            if (state.gameMode === 'multi') {
+            if (state.gameMode === 'multi' || state.gameMode === 'multi_ct') {
                 const camPos = state.controls.getObject().position;
                 const camRot = state.camera.rotation;
                 network.sendUpdate(camPos, camRot);
@@ -135,9 +212,10 @@ function animate() {
 
     // Weapon drop animation/pickup
     updateWeaponDrops(delta);
+    updateBombTimers();
 
-    // NPC Logic (Only in Single Player)
-    if (state.gameMode === 'single') {
+    // NPC Logic (Only in Single Player / AI CT)
+    if (state.gameMode === 'single' || state.gameMode === 'ai_ct') {
         const playerPos = state.controls.getObject().position;
         state.enemies.forEach(e => {
             e.velocity.y -= 9.8 * 100 * delta;
@@ -204,6 +282,11 @@ function animate() {
 
 export function startSinglePlayer() {
     state.gameMode = 'single';
+    state.currentMode = 'classic';
+    state.playerTeam = null;
+    resetBombState();
+    setModeHints('classic');
+    disconnectMultiplayer();
     clearEnemies();
     if (state.weaponDrops.length) {
         state.weaponDrops.forEach(drop => {
@@ -216,6 +299,34 @@ export function startSinglePlayer() {
     spawnEnemy(-150, 0, -120);
     spawnEnemy(150, 0, -120);
     spawnEnemy(0, 0, 80);
+
+    document.getElementById('login-modal').style.display = 'none';
+    document.getElementById('start-screen').style.display = 'flex';
+}
+
+export function startAICTMode(team = 'CT') {
+    state.gameMode = 'ai_ct';
+    state.currentMode = 'ai_ct';
+    state.playerTeam = team;
+    resetBombState();
+    state.bomb.hasBomb = team === 'T';
+    setModeHints('ai_ct', team);
+    disconnectMultiplayer();
+    clearEnemies();
+    if (state.weaponDrops.length) {
+        state.weaponDrops.forEach(drop => {
+            if (drop.mesh?.parent) state.scene.remove(drop.mesh);
+        });
+        state.weaponDrops = [];
+    }
+    const ctSpawns = [
+        [80, 0, 150], [-80, 0, 160], [0, 0, 200], [150, 0, 120], [-150, 0, 120]
+    ];
+    const tSpawns = [
+        [0, 0, -220], [120, 0, -220], [-120, 0, -220], [60, 0, -170], [-60, 0, -170]
+    ];
+    const enemySpawns = team === 'CT' ? tSpawns : ctSpawns;
+    enemySpawns.forEach(pos => spawnEnemy(pos[0], pos[1], pos[2]));
 
     document.getElementById('login-modal').style.display = 'none';
     document.getElementById('start-screen').style.display = 'flex';

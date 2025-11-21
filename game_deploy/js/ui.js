@@ -3,38 +3,178 @@ import { WEAPONS } from './constants.js';
 import { state } from './state.js';
 import { switchWeapon, fireWeapon, reload } from './player.js';
 import { playSound } from './audio.js';
-import { startSinglePlayer } from './main.js';
+import { startSinglePlayer, startAICTMode } from './main.js';
+
+const MODE_HINTS = {
+    general: [
+        '<strong>Movement</strong>: WASD to move, Space to jump, CTRL to crouch, Shift to walk.',
+        '<strong>Combat</strong>: 1/2/3 swap weapons, R reloads, B opens shop.',
+        '<strong>Voice</strong>: Hold T to talk. ESC opens settings.'
+    ],
+    classic: [
+        'Practice against bots. Try new weapons and crouch for tighter spray.'
+    ],
+    ai_ct: {
+        CT: [
+            'Defend bomb sites A/B. Press H while looking at the bomb to defuse.',
+            'Listen for audio cues and coordinate with AI teammates.'
+        ],
+        T: [
+            'Plant at highlighted zones with G. Guard until detonation.',
+            'You start with the bomb. Dropping is disabled for simplicity.'
+        ]
+    },
+    multi_ct: {
+        CT: [
+            'Only teammates hear your voice.',
+            'Defuse planted bombs with H. Protect sites!'
+        ],
+        T: [
+            'Plant with G while inside a bomb site circle.',
+            'Keep communications short—only your squad hears you.'
+        ]
+    }
+};
+
+let pendingTeamResolve = null;
 
 export function initLoginUI() {
+    const nameInput = document.getElementById('player-name');
     const mpBtn = document.getElementById('multiplayer-btn');
     const spBtn = document.getElementById('singleplayer-btn');
-    const nameInput = document.getElementById('player-name');
-    const menuDiv = document.getElementById('login-modal');
+    const aiBtn = document.getElementById('ai-ct-btn');
+    const cttBtn = document.getElementById('ctt-btn');
 
-    // MULTIPLAYER JOIN
+    setModeHints('classic');
+
     mpBtn.addEventListener('click', () => {
         const name = nameInput.value.trim();
-
-        if (name.length > 0) {
-            state.gameMode = 'multi';
-            // Connect to 'global' room
-            network.connect(name, 'global');
-        } else {
-            alert("Please enter a name for Multiplayer");
-        }
+        if (!name) return alert('Enter a name for multiplayer.');
+        state.currentMode = 'classic';
+        state.gameMode = 'multi';
+        network.connect(name, 'global', { mode: 'ffa' });
     });
 
-    // SINGLE PLAYER START
     spBtn.addEventListener('click', () => {
+        state.currentMode = 'classic';
+        setModeHints('classic');
         startSinglePlayer();
     });
 
-    // Init Mobile Controls if touch supported
+    aiBtn.addEventListener('click', () => {
+        showTeamSelect(team => {
+            state.currentMode = 'ai_ct';
+            state.playerTeam = team;
+            setModeHints('ai_ct', team);
+            startAICTMode(team);
+            hideLoginModal();
+        });
+    });
+
+    cttBtn.addEventListener('click', () => {
+        const name = nameInput.value.trim();
+        if (!name) return alert('Enter a name for multiplayer.');
+        showTeamSelect(team => {
+            state.currentMode = 'multi_ct';
+            state.gameMode = 'multi_ct';
+            setModeHints('multi_ct', team);
+            network.connect(name, 'ct_room', { mode: 'ctt', teamPreference: team });
+        });
+    });
+
+    document.getElementById('team-ct').addEventListener('click', () => resolveTeamSelect('CT'));
+    document.getElementById('team-t').addEventListener('click', () => resolveTeamSelect('T'));
+
+    initSettingsMenu();
+
     if ('ontouchstart' in window || navigator.maxTouchPoints) {
         state.isMobile = true;
         initMobileControls();
     }
 }
+
+function hideLoginModal() {
+    const menuDiv = document.getElementById('login-modal');
+    menuDiv.style.display = 'none';
+}
+
+function showTeamSelect(cb) {
+    pendingTeamResolve = cb;
+    const modal = document.getElementById('team-select-modal');
+    modal.style.display = 'block';
+}
+
+function resolveTeamSelect(team) {
+    if (!pendingTeamResolve) {
+        document.getElementById('team-select-modal').style.display = 'none';
+        return;
+    }
+    const cb = pendingTeamResolve;
+    pendingTeamResolve = null;
+    document.getElementById('team-select-modal').style.display = 'none';
+    cb(team);
+}
+
+function initSettingsMenu() {
+    const resumeBtn = document.getElementById('settings-resume');
+    const quitBtn = document.getElementById('settings-quit');
+    const switchBtn = document.getElementById('settings-switch');
+    resumeBtn.addEventListener('click', () => toggleSettingsMenu(false));
+    quitBtn.addEventListener('click', () => {
+        toggleSettingsMenu(false);
+        window.location.reload();
+    });
+    switchBtn.addEventListener('click', () => {
+        toggleSettingsMenu(false);
+        state.controls?.unlock();
+        document.getElementById('login-modal').style.display = 'flex';
+    });
+}
+
+export function toggleSettingsMenu(force) {
+    const menu = document.getElementById('settings-menu');
+    if (!menu) return;
+    const show = typeof force === 'boolean' ? force : menu.style.display !== 'block';
+    menu.style.display = show ? 'block' : 'none';
+    state.settingsOpen = show;
+    if (show) {
+        state.controls?.unlock();
+    } else {
+        const shopOpen = document.getElementById('shop-menu').style.display === 'block';
+        if (!state.player.isDead && !shopOpen) {
+            state.controls?.lock();
+        }
+    }
+}
+
+export function setModeHints(mode = 'classic', team = 'CT') {
+    const hintsPanel = document.getElementById('hints-panel');
+    if (!hintsPanel) return;
+    const lines = [...MODE_HINTS.general];
+    const specific = MODE_HINTS[mode];
+    if (Array.isArray(specific)) {
+        lines.push(...specific);
+    } else if (specific && specific[team]) {
+        lines.push(...specific[team]);
+    }
+    state.modeHints = lines;
+    hintsPanel.innerHTML = lines.map(line => `<div>${line}</div>`).join('');
+}
+
+export function updateBombIndicator(message, color = 'rgba(255,64,64,0.8)') {
+    const el = document.getElementById('bomb-indicator');
+    if (!el) return;
+    if (!message) {
+        el.style.display = 'none';
+        return;
+    }
+    el.style.display = 'block';
+    el.style.background = color;
+    el.innerHTML = message;
+}
+
+window.setModeHints = setModeHints;
+window.updateBombIndicator = updateBombIndicator;
 
 function initMobileControls() {
     const styles = `

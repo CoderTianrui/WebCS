@@ -72,8 +72,8 @@ export function killEnemy(e) {
         kf.appendChild(div);
         setTimeout(() => div.remove(), 3000);
 
-        // Respawn logic - ONLY IN SINGLE PLAYER
-        if (state.gameMode === 'single') {
+        // Respawn logic - ONLY IN SINGLE PLAYER / AI CT
+        if (state.gameMode === 'single' || state.gameMode === 'ai_ct') {
             const dropWeapon = DROPPABLE_WEAPONS[Math.floor(Math.random() * DROPPABLE_WEAPONS.length)];
             spawnWeaponDrop(dropWeapon, e.mesh.position.clone());
             setTimeout(() => {

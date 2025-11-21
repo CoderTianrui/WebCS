@@ -18,6 +18,22 @@ export const state = {
     chatMessageQueue: [],
     weaponDrops: [],
     playerName: 'Player',
+    playerTeam: null,
+    currentMode: 'classic', // classic, ai_ct, multi_ct
+    modeHints: [],
+    settingsOpen: false,
+
+    bomb: {
+        hasBomb: false,
+        isPlanted: false,
+        site: null,
+        plantedAt: 0,
+        explodeTime: 0,
+        mesh: null,
+        timerText: null
+    },
+
+    bombSites: [],
 
     // Input
     moveF: false,

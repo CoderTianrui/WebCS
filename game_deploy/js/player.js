@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { WEAPONS } from './constants.js';
 import { state } from './state.js';
 import { playSound } from './audio.js';
-import { updateHUD, toggleShop } from './ui.js';
+import { updateHUD, toggleShop, toggleSettingsMenu } from './ui.js';
 import { createTracer, createHole, spawnParticles, showHeadshot } from './utils.js';
 import { killEnemy } from './entities.js';
 import { toggleMusic } from './audio.js';
@@ -10,6 +10,8 @@ import { network, updateScoreboardUI, appendChatMessage } from './network.js';
 
 const isEnterKey = (event) => event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter' || event.keyCode === 13;
 const isEscapeKey = (event) => event.code === 'Escape' || event.key === 'Escape' || event.keyCode === 27;
+
+const LOCAL_BOMB_TIMER = 40000;
 
 // Voice Recording
 let mediaRecorder;
@@ -127,7 +129,7 @@ export function fireWeapon() {
     playSound(stat.sound);
 
     // Notify Network if Multiplayer
-    if (state.gameMode === 'multi') {
+    if (state.gameMode === 'multi' || state.gameMode === 'multi_ct') {
         network.sendShoot();
     }
 
@@ -187,7 +189,7 @@ export function fireWeapon() {
         }
 
         if (remoteId) {
-            if (state.gameMode === 'multi') {
+            if (state.gameMode === 'multi' || state.gameMode === 'multi_ct') {
                 targetHit = h;
                 hitRemotePlayerId = remoteId;
                 break;
@@ -217,7 +219,7 @@ export function fireWeapon() {
         start.y -= 0.1;
         createTracer(start, targetHit.point, 0xffff00);
 
-        if (hitEnemy && state.gameMode === 'single') {
+        if (hitEnemy && (state.gameMode === 'single' || state.gameMode === 'ai_ct')) {
             // Hit NPC
             // Headshot Logic?
             const enemy = hitEnemy;
@@ -239,7 +241,7 @@ export function fireWeapon() {
 
             if (enemy.hp <= 0) killEnemy(enemy);
 
-        } else if (hitRemotePlayerId && state.gameMode === 'multi') {
+        } else if (hitRemotePlayerId && (state.gameMode === 'multi' || state.gameMode === 'multi_ct')) {
             // Hit Remote Player
             spawnParticles(targetHit.point, 0x880000, 5); // Blood
             playSound('hit');
@@ -300,7 +302,7 @@ export function respawnPlayer() {
     updateHUD();
     state.controls.lock();
 
-    if (state.gameMode === 'multi') {
+    if (state.gameMode === 'multi' || state.gameMode === 'multi_ct') {
         network.sendRespawn();
     }
 }
@@ -324,7 +326,7 @@ export function onKeyDown(e) {
             if (state.lastChatTime && now - state.lastChatTime < 200) return;
             
             const msg = chatInput.value.trim();
-            if (msg.length > 0 && state.gameMode === 'multi') {
+            if (msg.length > 0 && (state.gameMode === 'multi' || state.gameMode === 'multi_ct')) {
                 const payload = network.sendChat(msg);
                 if (payload) {
                     appendChatMessage({
@@ -357,6 +359,10 @@ export function onKeyDown(e) {
         }
         return; // Block other game controls while typing
     } else {
+        if (state.settingsOpen && !isEnterKey(e)) {
+            if (isEscapeKey(e)) toggleSettingsMenu(false);
+            return;
+        }
         // Chat not open
         if (isEnterKey(e)) {
             e.preventDefault(); // Prevent default behavior
@@ -375,6 +381,10 @@ export function onKeyDown(e) {
             }, 10);
             return;
         }
+        if (isEscapeKey(e)) {
+            toggleSettingsMenu(!state.settingsOpen);
+            return;
+        }
     }
 
     // Standard Game Controls (only if chat is closed)
@@ -382,7 +392,7 @@ export function onKeyDown(e) {
         e.preventDefault(); // Prevent focus change
         document.getElementById('scoreboard').style.display = 'block';
         // Update scoreboard now just in case
-        if (state.gameMode === 'multi') {
+        if (state.gameMode === 'multi' || state.gameMode === 'multi_ct') {
             updateScoreboardUI();
         }
     }
@@ -397,6 +407,59 @@ export function onKeyDown(e) {
     if (e.code === 'ControlLeft') state.crouch = true;
     if (e.code === 'KeyM') toggleMusic();
     if (e.code === 'KeyT') startRecording();
+    if (e.code === 'KeyG') attemptPlantBomb();
+    if (e.code === 'KeyH') attemptDefuseBomb();
+}
+
+function getBombSiteUnderPlayer() {
+    if (!state.bombSites || !state.controls) return null;
+    const pos = state.controls.getObject().position;
+    return state.bombSites.find(site => site.position.distanceTo(pos) <= site.radius) || null;
+}
+
+function attemptPlantBomb() {
+    if (state.player.isDead || !state.controls) return;
+    if (!state.bomb || (!state.bomb.hasBomb && state.gameMode !== 'multi_ct')) return;
+    const site = getBombSiteUnderPlayer();
+    if (!site) {
+        window.updateBombIndicator && window.updateBombIndicator('Enter bomb site to plant (G).', 'rgba(255,152,0,0.85)');
+        return;
+    }
+    if (state.gameMode === 'ai_ct' && state.playerTeam === 'T' && state.bomb.hasBomb) {
+        plantLocalBomb(site);
+    } else if (state.gameMode === 'multi_ct' && state.playerTeam === 'T' && state.bomb.hasBomb) {
+        network.sendPlantBomb(site.name);
+    }
+}
+
+function attemptDefuseBomb() {
+    if (!state.bomb || !state.bomb.isPlanted || state.player.isDead) return;
+    const site = getBombSiteUnderPlayer();
+    if (!site || state.bomb.site !== site.name) {
+        window.updateBombIndicator && window.updateBombIndicator('Locate the bomb to defuse (H).', 'rgba(100,181,246,0.85)');
+        return;
+    }
+    if (state.gameMode === 'ai_ct' && state.playerTeam === 'CT') {
+        defuseLocalBomb('Bomb defused! CT win.');
+    } else if (state.gameMode === 'multi_ct' && state.playerTeam === 'CT') {
+        network.sendDefuseBomb();
+    }
+}
+
+function plantLocalBomb(site) {
+    state.bomb.hasBomb = false;
+    state.bomb.isPlanted = true;
+    state.bomb.site = site.name;
+    state.bomb.plantedAt = performance.now();
+    state.bomb.explodeTime = performance.now() + LOCAL_BOMB_TIMER;
+    window.updateBombIndicator && window.updateBombIndicator(`Bomb planted at Site ${site.name}!`, 'rgba(255,64,64,0.9)');
+}
+
+function defuseLocalBomb(message = 'Bomb defused!') {
+    state.bomb.isPlanted = false;
+    state.bomb.hasBomb = false;
+    state.bomb.explodeTime = 0;
+    window.updateBombIndicator && window.updateBombIndicator(message, 'rgba(76,175,80,0.85)');
 }
 
 export function onKeyUp(e) {

@@ -7,6 +7,8 @@ const MAX_CHAT_HISTORY = 200;
 
 const chatRenderQueue = [];
 let chatRenderScheduled = false;
+const voiceQueue = [];
+let isVoicePlaying = false;
 
 function scheduleFrame(fn) {
     if (typeof window !== 'undefined' && window.requestAnimationFrame) {
@@ -73,7 +75,7 @@ function ensureChatBuffers() {
 const PRODUCTION_SERVER_URL = "https://webcs-6js9.onrender.com";
 
 export const network = {
-    connect: (name, room) => {
+    connect: (name, room, options = {}) => {
         // Determine URL
         let serverUrl;
 
@@ -101,7 +103,13 @@ export const network = {
             console.log('Connected to server');
             state.id = state.socket.id;
             state.room = room;
-            state.socket.emit('join', { name: playerLabel, room });
+            const mode = options.mode || (state.currentMode === 'multi_ct' ? 'ctt' : 'ffa');
+            state.socket.emit('join', {
+                name: playerLabel,
+                room,
+                mode,
+                teamPreference: options.teamPreference || null
+            });
 
             // Hide Login, Show Game
             document.getElementById('login-modal').style.display = 'none';
@@ -187,6 +195,52 @@ export const network = {
         });
 
         s.on('chat_message', (data) => appendChatMessage(data));
+
+        s.on('team_assignment', (data) => {
+            if (!data || !data.team) return;
+            if (!data.id || data.id === state.id) {
+                state.playerTeam = data.team;
+                state.bomb.hasBomb = !!data.isCarrier;
+                state.currentMode = data.mode || state.currentMode;
+                if (typeof window.setModeHints === 'function' && state.currentMode === 'multi_ct') {
+                    window.setModeHints('multi_ct', data.team);
+                }
+            } else if (state.remotePlayers[data.id]) {
+                state.remotePlayers[data.id].team = data.team;
+            }
+        });
+
+        s.on('bomb_carrier', (data) => {
+            state.bomb.hasBomb = data?.id === state.id;
+        });
+
+        s.on('bomb_planted', (data) => {
+            if (!data) return;
+            state.bomb.isPlanted = true;
+            state.bomb.site = data.site;
+            state.bomb.plantedAt = data.plantedAt;
+            state.bomb.explodeTime = data.explodeTime;
+            state.bomb.hasBomb = false;
+            window.updateBombIndicator && window.updateBombIndicator(`Bomb planted at Site ${data.site}!`, 'rgba(255,64,64,0.9)');
+        });
+
+        s.on('bomb_defused', (data) => {
+            state.bomb.isPlanted = false;
+            state.bomb.hasBomb = false;
+            state.bomb.explodeTime = 0;
+            window.updateBombIndicator && window.updateBombIndicator(data?.message || 'Bomb defused!', 'rgba(76,175,80,0.85)');
+        });
+
+        s.on('round_result', (data) => {
+            state.bomb.isPlanted = false;
+            state.bomb.hasBomb = data?.carrierId === state.id;
+            state.bomb.explodeTime = 0;
+            if (data?.message && window.updateBombIndicator) {
+                window.updateBombIndicator(data.message, data.color || 'rgba(255,255,255,0.6)');
+            } else {
+                window.updateBombIndicator && window.updateBombIndicator('');
+            }
+        });
 
         s.on('scoreboard_update', (players) => {
             // Update global scoreboard data
@@ -283,6 +337,16 @@ export const network = {
         return payload;
     },
 
+    sendPlantBomb: (site) => {
+        if (!state.socket || !site) return;
+        state.socket.emit('plant_bomb', { site });
+    },
+
+    sendDefuseBomb: () => {
+        if (!state.socket) return;
+        state.socket.emit('defuse_bomb');
+    },
+
     // Voice
     sendVoiceStart: () => {
         if (!state.socket) return;
@@ -305,40 +369,45 @@ let audioCtx;
 
 function playVoiceChunk(data) {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
     if (audioCtx.state === 'suspended') {
         audioCtx.resume();
     }
+    const processBuffer = (bufferData) => {
+        const copy = bufferData.slice(0);
+        audioCtx.decodeAudioData(copy, (buffer) => {
+            enqueueVoicePlayback(buffer);
+        }, () => { /* ignore */ });
+    };
 
-    // Decode raw data (from Blob/ArrayBuffer) to PCM
-    // NOTE: MediaRecorder usually gives WEBM/OPUS chunks.
-    // decodeAudioData is good but might be tricky with small chunks of stream data.
-    // However, for "press T to talk" it usually sends a decent chunk.
-    
-    // Ensure data is an ArrayBuffer
-    let arrayBuffer = data;
     if (data instanceof Blob) {
-         data.arrayBuffer().then(buf => playVoiceChunk(buf));
-         return;
+        data.arrayBuffer().then(processBuffer);
+        return;
     }
+    if (data instanceof ArrayBuffer) {
+        processBuffer(data);
+    }
+}
 
-    try {
-        // Make a copy of buffer because decodeAudioData detaches it
-        const bufferCopy = data.slice(0);
-        audioCtx.decodeAudioData(bufferCopy, (buffer) => {
-            const source = audioCtx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(audioCtx.destination);
-            source.start(0);
-        }, (err) => {
-            // It's common to get decode errors on partial webm chunks
-            // Real implementation would use SourceBuffer/MediaSource extensions or similar
-            // But for simple hack, we suppress or log
-            // console.error("Error decoding audio chunk", err);
-        });
-    } catch(e) {
-        console.error("Audio processing error", e);
+function enqueueVoicePlayback(buffer) {
+    if (!buffer) return;
+    voiceQueue.push(buffer);
+    if (!isVoicePlaying) {
+        isVoicePlaying = true;
+        playNextVoiceBuffer();
     }
+}
+
+function playNextVoiceBuffer() {
+    if (!voiceQueue.length) {
+        isVoicePlaying = false;
+        return;
+    }
+    const buffer = voiceQueue.shift();
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioCtx.destination);
+    source.onended = () => playNextVoiceBuffer();
+    source.start(0);
 }
 
 // Helper to update Scoreboard UI (called from ui.js or network)
@@ -359,7 +428,11 @@ export function updateScoreboardUI() {
     const myKills = state.player.kills || 0; // Need to track local kills/deaths or rely on server data
     // Actually server sends all data including self in 'scoreboard_update'
 
-    Object.values(state.scoreboardData).sort((a, b) => b.kills - a.kills).forEach(p => {
+    Object.values(state.scoreboardData).map(p => ({
+        ...p,
+        kills: p.kills || 0,
+        deaths: p.deaths || 0
+    })).sort((a, b) => b.kills - a.kills).forEach(p => {
         const row = document.createElement('tr');
         const isMe = p.id === state.id;
         row.style.color = isMe ? '#00ff00' : 'white';
@@ -367,8 +440,9 @@ export function updateScoreboardUI() {
         // Let's show a random realistic ping for others, 15ms for self
         const ping = isMe ? 15 : Math.floor(Math.random() * 50 + 20);
 
+        const teamTag = p.team ? `[${p.team}] ` : '';
         row.innerHTML = `
-            <td style="text-align:left; padding:5px;">${p.name}</td>
+            <td style="text-align:left; padding:5px;">${teamTag}${p.name}</td>
             <td style="text-align:center; padding:5px;">${p.kills || 0}</td>
             <td style="text-align:center; padding:5px;">${p.deaths || 0}</td>
             <td style="text-align:center; padding:5px;">${ping}</td>
