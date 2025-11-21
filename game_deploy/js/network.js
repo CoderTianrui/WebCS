@@ -5,6 +5,40 @@ import { updateHUD } from './ui.js';
 
 const MAX_CHAT_HISTORY = 200;
 
+function ensureChatBuffers() {
+    if (!state.chatMessageIds) {
+        state.chatMessageIds = new Set();
+    }
+    if (!state.chatMessageQueue) {
+        state.chatMessageQueue = [];
+    }
+}
+
+export function appendChatMessage(data) {
+    if (!data || !data.msg) return false;
+    ensureChatBuffers();
+
+    const dedupId = data.mid || `${data.id || 'unknown'}-${data.msg}-${data.ts || ''}`;
+    if (state.chatMessageIds.has(dedupId)) return false;
+
+    state.chatMessageIds.add(dedupId);
+    state.chatMessageQueue.push(dedupId);
+    if (state.chatMessageQueue.length > MAX_CHAT_HISTORY) {
+        const oldest = state.chatMessageQueue.shift();
+        if (oldest) state.chatMessageIds.delete(oldest);
+    }
+
+    const chatBox = document.getElementById('chat-history');
+    if (chatBox) {
+        const displayName = data.self ? `${data.name || 'You'} (You)` : (data.name || 'Player');
+        const line = document.createElement('div');
+        line.innerHTML = `<span style="color:#aaa">&lt;${displayName}&gt;</span> ${data.msg}`;
+        chatBox.appendChild(line);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+    return true;
+}
+
 // --- CONFIGURATION ---
 // CHANGE THIS TO YOUR RENDER URL ONCE DEPLOYED
 const PRODUCTION_SERVER_URL = "https://webcs-6js9.onrender.com";
@@ -29,13 +63,16 @@ export const network = {
             state.socket.disconnect();
         }
 
+        const playerLabel = name?.trim() || state.playerName || 'Player';
+        state.playerName = playerLabel;
+
         state.socket = io(serverUrl);
 
         state.socket.on('connect', () => {
             console.log('Connected to server');
             state.id = state.socket.id;
             state.room = room;
-            state.socket.emit('join', { name, room });
+            state.socket.emit('join', { name: playerLabel, room });
 
             // Hide Login, Show Game
             document.getElementById('login-modal').style.display = 'none';
@@ -114,30 +151,7 @@ export const network = {
             }
         });
 
-        s.on('chat_message', (data) => {
-            if (!state.chatMessageIds) {
-                state.chatMessageIds = new Set();
-                state.chatMessageQueue = [];
-            }
-
-            const dedupId = data.mid || `${data.id || 'unknown'}-${data.msg}-${data.ts || ''}`;
-            if (state.chatMessageIds.has(dedupId)) return;
-            state.chatMessageIds.add(dedupId);
-            state.chatMessageQueue.push(dedupId);
-            if (state.chatMessageQueue.length > MAX_CHAT_HISTORY) {
-                const oldest = state.chatMessageQueue.shift();
-                if (oldest) state.chatMessageIds.delete(oldest);
-            }
-
-            // data: { id, name, msg }
-            const chatBox = document.getElementById('chat-history');
-            if (chatBox) {
-                const line = document.createElement('div');
-                line.innerHTML = `<span style="color:#aaa">&lt;${data.name}&gt;</span> ${data.msg}`;
-                chatBox.appendChild(line);
-                chatBox.scrollTop = chatBox.scrollHeight;
-            }
-        });
+        s.on('chat_message', (data) => appendChatMessage(data));
 
         s.on('scoreboard_update', (players) => {
             // Update global scoreboard data
@@ -224,8 +238,14 @@ export const network = {
     },
 
     sendChat: (msg) => {
-        if (!state.socket) return;
-        state.socket.emit('chat_message', msg);
+        if (!state.socket || !msg) return null;
+        const payload = {
+            msg,
+            mid: `${state.id || 'local'}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            ts: Date.now()
+        };
+        state.socket.emit('chat_message', payload);
+        return payload;
     },
 
     // Voice

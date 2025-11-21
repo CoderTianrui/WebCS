@@ -6,7 +6,7 @@ import { updateHUD, toggleShop } from './ui.js';
 import { createTracer, createHole, spawnParticles, showHeadshot } from './utils.js';
 import { killEnemy } from './entities.js';
 import { toggleMusic } from './audio.js';
-import { network, updateScoreboardUI } from './network.js';
+import { network, updateScoreboardUI, appendChatMessage } from './network.js';
 
 const isEnterKey = (event) => event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter' || event.keyCode === 13;
 const isEscapeKey = (event) => event.code === 'Escape' || event.key === 'Escape' || event.keyCode === 27;
@@ -137,7 +137,10 @@ export function fireWeapon() {
 
     // Hit Scan
     const ray = new THREE.Raycaster();
-    const spread = state.crouch ? stat.spread * 0.5 : stat.spread;
+    const baseSpread = typeof stat.spread === 'number' ? stat.spread : (stat.type === 'melee' ? 0 : 0.02);
+    const spread = state.crouch ? baseSpread * 0.5 : baseSpread;
+    const maxDist = stat.range ?? (stat.type === 'melee' ? 6 : 1000);
+    ray.far = maxDist;
     ray.setFromCamera(new THREE.Vector2((Math.random() - .5) * spread, (Math.random() - .5) * spread), state.camera);
 
     // Intersect everything
@@ -147,10 +150,10 @@ export function fireWeapon() {
     let hitRemotePlayerId = null;
 
     // FIXED HIT DETECTION LOGIC
-    const maxDist = stat.type === 'melee' ? 6 : 1000; // Increased range for knife (6)
-    
+    const minHitDistance = stat.type === 'melee' ? 0.05 : 1;
+
     for (let h of hits) {
-        if (h.distance < 1) continue; // Skip self/close artifacts
+        if (h.distance < minHitDistance) continue; // Skip self/close artifacts
         if (h.distance > maxDist) break; // Too far (hits are sorted, so we can break early)
 
         let obj = h.object;
@@ -250,7 +253,7 @@ export function fireWeapon() {
                  createHole(targetHit.point, targetHit.face.normal); 
                  // Add sparks specifically for knife on wall
                  spawnParticles(targetHit.point, 0xffff00, 5);
-                 playSound('hit'); // Knife hitting wall sound
+                 playSound('knife'); // Knife hitting wall sound
             } else {
                  createHole(targetHit.point, targetHit.face.normal);
                  spawnParticles(targetHit.point, 0xaaaaaa, 3); // Dust/Sparks
@@ -283,8 +286,9 @@ export function reload() {
 export function respawnPlayer() {
     state.player.hp = 100;
     state.player.isDead = false;
-    state.player.ammo = { glock: 20, deagle: 7, m4a1: 30, awp: 10 };
-    state.player.slots = [null, 'glock', 'knife'];
+    state.player.ammo = { glock: 20, usp: 12, deagle: 7, m4a1: 30, ak47: 30, mp5: 30, awp: 10 };
+    state.player.mags = { glock: 120, usp: 60, deagle: 35, m4a1: 90, ak47: 90, mp5: 120, awp: 30 };
+    state.player.slots = ['m4a1', 'glock', 'knife'];
     state.player.activeSlot = 1;
 
     state.camera.position.set(0, 10, 100);
@@ -321,7 +325,17 @@ export function onKeyDown(e) {
             
             const msg = chatInput.value.trim();
             if (msg.length > 0 && state.gameMode === 'multi') {
-                network.sendChat(msg);
+                const payload = network.sendChat(msg);
+                if (payload) {
+                    appendChatMessage({
+                        id: state.id || 'local',
+                        name: state.playerName || 'You',
+                        msg,
+                        mid: payload.mid,
+                        ts: payload.ts,
+                        self: true
+                    });
+                }
                 state.lastChatTime = now;
             }
             chatInput.value = '';

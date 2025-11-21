@@ -107,15 +107,19 @@ io.on('connection', (socket) => {
         });
 
         // Handle Chat
-        socket.on('chat_message', (msg) => {
+        socket.on('chat_message', (payload) => {
             updateActivity();
-            const messageId = `${socket.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            const text = typeof payload === 'string' ? payload : (payload?.msg ?? '');
+            if (!text || !rooms[room]?.players[socket.id]) return;
+            const clientMid = typeof payload === 'object' && payload?.mid ? String(payload.mid) : null;
+            const clientTs = typeof payload === 'object' && payload?.ts ? Number(payload.ts) : Date.now();
+            const messageId = clientMid || `${socket.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
             io.to(room).emit('chat_message', {
                 id: socket.id,
                 name: rooms[room].players[socket.id].name,
-                msg,
+                msg: text,
                 mid: messageId,
-                ts: Date.now()
+                ts: clientTs || Date.now()
             });
         });
 
@@ -201,8 +205,8 @@ setInterval(() => {
             if (p.isZombie) return;
             const idleTime = now - p.lastAction;
 
-            // Warning at 50s (10s before kick)
-            if (idleTime > 50000 && idleTime < 51000) {
+            // Warning at 110s (10s before kick)
+            if (idleTime > 110000 && idleTime < 111000) {
                 io.to(socketId).emit('chat_message', {
                     id: 'server',
                     name: 'SERVER',
@@ -210,11 +214,11 @@ setInterval(() => {
                 });
             }
 
-            // Kick at 60s
-            if (idleTime > 60000) {
+            // Kick at 120s
+            if (idleTime > 120000) {
                 const socket = io.sockets.sockets.get(socketId);
                 if (socket) {
-                    socket.emit('error_msg', 'You were kicked for being idle (60s). Refresh to rejoin.');
+                    socket.emit('error_msg', 'You were kicked for being idle (120s). Refresh to rejoin.');
                     socket.disconnect();
                 }
                 // Cleanup happens in disconnect handler

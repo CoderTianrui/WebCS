@@ -193,23 +193,38 @@ export function toggleShop() {
 }
 
 export function buy(item) {
-    const p = { glock: 400, deagle: 700, m4a1: 3100, awp: 4750 }[item];
-    if (state.player.money >= p) {
-        state.player.money -= p;
-        const type = WEAPONS[item].type;
-
-        if (type === 'rifle') {
-            state.player.slots[0] = item; // Primary
-            switchWeapon(0);
-        } else if (type === 'pistol') {
-            state.player.slots[1] = item; // Secondary
-            switchWeapon(1);
-        }
-        // Knife stays at 2
-
-        toggleShop();
-        playSound('buy');
+    const weapon = WEAPONS[item];
+    if (!weapon) return;
+    const price = weapon.price ?? 0;
+    if (state.player.money < price) {
+        playSound('click');
+        return;
     }
+
+    state.player.money -= price;
+    const type = weapon.type;
+
+    if (weapon.clip) {
+        state.player.ammo[item] = weapon.clip;
+    }
+    if (weapon.mag) {
+        state.player.mags[item] = weapon.mag;
+    }
+
+    if (type === 'rifle' || type === 'sniper') {
+        state.player.slots[0] = item; // Primary
+        switchWeapon(0);
+    } else if (type === 'pistol') {
+        state.player.slots[1] = item; // Secondary
+        switchWeapon(1);
+    } else if (type === 'melee') {
+        state.player.slots[2] = item;
+        switchWeapon(2);
+    }
+
+    toggleShop();
+    playSound('buy');
+    updateHUD();
 }
 
 // Expose for HTML onclick

@@ -48,6 +48,20 @@ export function playSound(id) {
         g.gain.setValueAtTime(0.05, t); 
         o.start(); o.stop(t + 0.05); 
     }
+    else if (id === 'heavy') {
+        o.type = 'square';
+        o.frequency.setValueAtTime(350, t);
+        g.gain.setValueAtTime(0.25, t);
+        g.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+        o.start(); o.stop(t + 0.2);
+    }
+    else if (id === 'knife') {
+        o.type = 'triangle';
+        o.frequency.setValueAtTime(250, t);
+        g.gain.setValueAtTime(0.2, t);
+        g.gain.linearRampToValueAtTime(0.001, t + 0.08);
+        o.start(); o.stop(t + 0.08);
+    }
     else if (id === 'headshot') { 
         // CRUNCH sound
         o.type = 'sawtooth';
