@@ -229,6 +229,10 @@ let audioCtx;
 function playVoiceChunk(data) {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+
     // data is ArrayBuffer
     audioCtx.decodeAudioData(data, (buffer) => {
         const source = audioCtx.createBufferSource();

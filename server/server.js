@@ -183,8 +183,8 @@ setInterval(() => {
             const p = room.players[socketId];
             const idleTime = now - p.lastAction;
 
-            // Warning at 20s (10s before kick)
-            if (idleTime > 20000 && idleTime < 21000) {
+            // Warning at 50s (10s before kick)
+            if (idleTime > 50000 && idleTime < 51000) {
                 io.to(socketId).emit('chat_message', {
                     id: 'server',
                     name: 'SERVER',
@@ -192,11 +192,11 @@ setInterval(() => {
                 });
             }
 
-            // Kick at 30s
-            if (idleTime > 30000) {
+            // Kick at 60s
+            if (idleTime > 60000) {
                 const socket = io.sockets.sockets.get(socketId);
                 if (socket) {
-                    socket.emit('error_msg', 'You were kicked for being idle (30s). Refresh to rejoin.');
+                    socket.emit('error_msg', 'You were kicked for being idle (60s). Refresh to rejoin.');
                     socket.disconnect();
                 }
                 // Cleanup happens in disconnect handler

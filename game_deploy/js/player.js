@@ -48,8 +48,13 @@ function startRecording() {
     if (!micIcon) {
         micIcon = document.createElement('div');
         micIcon.id = 'mic-icon';
-        micIcon.innerText = '🎤';
-        micIcon.style.cssText = 'position:absolute; bottom:100px; right:20px; font-size:30px; color:lime;';
+        micIcon.innerHTML = '🎤 SPEAKING...';
+        micIcon.style.cssText = 'position:absolute; top:20%; left:50%; transform:translate(-50%,0); font-size:40px; color:#00ff00; font-weight:bold; text-shadow: 2px 2px 0 #000; display:none; animation: blink 1s infinite;';
+
+        const style = document.createElement('style');
+        style.innerHTML = `@keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }`;
+        document.head.appendChild(style);
+
         hud.appendChild(micIcon);
     }
     micIcon.style.display = 'block';
@@ -93,8 +98,9 @@ export function switchWeapon(slot) {
         state.weaponGroup.add(h, b, arm);
         state.weaponGroup.position.set(0.5, -0.5, -1);
     } else {
-        const len = w.type === 'rifle' ? 2 : 1;
-        const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, len), gunColor);
+        const len = w.type === 'rifle' || w.type === 'sniper' ? 2 : 1;
+        const barrelColor = name === 'ak47' ? new THREE.MeshStandardMaterial({ color: 0x4d2c19 }) : gunColor;
+        const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, len), barrelColor);
         const arm = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 2), armColor);
         arm.position.set(0.3, 0, 0.5); arm.rotation.y = -0.2;
         state.weaponGroup.add(barrel, arm);

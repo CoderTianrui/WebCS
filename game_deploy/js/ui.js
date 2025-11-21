@@ -14,7 +14,7 @@ export function initLoginUI() {
     // MULTIPLAYER JOIN
     mpBtn.addEventListener('click', () => {
         const name = nameInput.value.trim();
-        
+
         if (name.length > 0) {
             state.gameMode = 'multi';
             // Connect to 'global' room
@@ -34,7 +34,7 @@ export function updateHUD() {
     document.getElementById('hp').innerText = state.player.hp;
     document.getElementById('money').innerText = "$ " + state.player.money;
     const w = state.player.slots[state.player.activeSlot];
-    if(w) {
+    if (w) {
         document.getElementById('wep-name').innerText = WEAPONS[w].name;
         document.getElementById('ammo').innerText = state.player.ammo[w] ?? '-';
         document.getElementById('mag').innerText = state.player.mags[w] ?? '-';
@@ -43,17 +43,17 @@ export function updateHUD() {
 
 export function toggleShop() {
     const m = document.getElementById('shop-menu');
-    if(m.style.display==='block'){m.style.display='none'; state.controls.lock();}
-    else{m.style.display='block'; state.controls.unlock();}
+    if (m.style.display === 'block') { m.style.display = 'none'; state.controls.lock(); }
+    else { m.style.display = 'block'; state.controls.unlock(); }
 }
 
 export function buy(item) {
-    const p = {glock:400, deagle:700, m4a1:3100, awp:4750}[item];
-    if(state.player.money >= p) {
+    const p = { glock: 400, deagle: 700, m4a1: 3100, awp: 4750 }[item];
+    if (state.player.money >= p) {
         state.player.money -= p;
         const type = WEAPONS[item].type;
-        
-        if(type === 'rifle') { 
+
+        if (type === 'rifle') {
             state.player.slots[0] = item; // Primary
             switchWeapon(0);
         } else if (type === 'pistol') {
@@ -61,7 +61,7 @@ export function buy(item) {
             switchWeapon(1);
         }
         // Knife stays at 2
-        
+
         toggleShop();
         playSound('buy');
     }
